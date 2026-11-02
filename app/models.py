@@ -1,10 +1,11 @@
 import uuid
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, Uuid, func
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, Text, Uuid, func
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
@@ -47,3 +48,37 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=True, server_default=func.current_timestamp()
     )
+
+
+class ResumeStatus(StrEnum):
+    UPLOADED = "uploaded"
+    EXTRACTING = "extracting"
+    EXTRACTED = "extracted"
+    FAILED = "failed"
+
+
+class Resume(Base):
+    """Mirrors db/migrations/003_create_resumes.sql + 004_store_resume_files_in_db.sql."""
+
+    __tablename__ = "resumes"
+
+    resume_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    # The file itself (BYTEA). Deferred so listing/reading resumes doesn't load the bytes;
+    # only the download endpoint touches it.
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False, deferred=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default=ResumeStatus.UPLOADED)
+    # Filled in by the extraction step (app/resume_extraction.py).
+    raw_text: Mapped[str | None] = mapped_column(Text)
+    extracted: Mapped[dict[str, Any] | None] = mapped_column(JSONType)
+    extraction_error: Mapped[str | None] = mapped_column(Text)
+    extracted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    uploaded_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.user_id"), nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=True, server_default=func.current_timestamp()
+    )
+
+    uploader: Mapped[User] = relationship(lazy="joined")

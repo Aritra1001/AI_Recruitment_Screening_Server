@@ -100,3 +100,48 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int  # seconds
     user: UserRead
+
+
+class UserSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    user_id: UUID
+    full_name: str
+    email: str
+
+
+class ResumeRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    resume_id: UUID
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    status: str
+    uploaded_at: datetime
+    uploader: UserSummary
+
+
+# --- Extracted resume fields --------------------------------------------------------------
+# What the extraction step (app/resume_extraction.py) stores in resumes.extracted. Every value
+# is copied from the resume text except `years`, which is computed from the job's dates as
+# written (null when the resume gives no usable dates).
+
+
+class ExperienceEntry(BaseModel):
+    company: str | None = None
+    role: str | None = None
+    years: float | None = None
+
+
+class ExtractedResume(BaseModel):
+    name: str | None = None
+    experience: list[ExperienceEntry] = Field(default_factory=list)
+    skills: list[str] = Field(default_factory=list)
+    education: list[str] = Field(default_factory=list)
+
+
+class ResumeDetail(ResumeRead):
+    extracted: ExtractedResume | None
+    extraction_error: str | None
+    extracted_at: datetime | None
