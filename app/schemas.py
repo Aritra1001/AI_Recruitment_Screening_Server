@@ -1,9 +1,54 @@
 import re
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.security import MAX_PASSWORD_BYTES, MIN_PASSWORD_LENGTH
+
+
+class JobCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=255)
+    description: str = Field(min_length=1)
+    required_skills: list[str] = Field(default_factory=list)
+    preferred_skills: list[str] = Field(default_factory=list)
+    # If omitted, derived from a line like "5+ years experience" in required_skills.
+    minimum_experience: int | None = Field(default=None, ge=0, le=60)
+
+
+class JobUpdate(BaseModel):
+    """Partial update: only the fields present in the request body are changed."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, min_length=1)
+    required_skills: list[str] | None = None
+    preferred_skills: list[str] | None = None
+    # Send null to clear it.
+    minimum_experience: int | None = Field(default=None, ge=0, le=60)
+
+    @field_validator("title", "description", "required_skills", "preferred_skills", mode="before")
+    @classmethod
+    def reject_null(cls, value):
+        # Defaults aren't validated, so this only fires when the client explicitly sends null.
+        if value is None:
+            raise ValueError("may be omitted but not null (send [] to clear a skill list)")
+        return value
+
+
+class JobRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    job_id: UUID
+    title: str
+    description: str
+    required_skills: list[str] | None
+    preferred_skills: list[str] | None
+    minimum_experience: int | None
+    created_at: datetime
 
 
 class LoginRequest(BaseModel):

@@ -2,10 +2,30 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import Boolean, DateTime, String, Uuid, func
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, Uuid, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
+
+# JSONB on PostgreSQL, plain JSON elsewhere (e.g. SQLite in tests).
+JSONType = JSON().with_variant(JSONB(), "postgresql")
+
+
+class Job(Base):
+    """Mirrors db/migrations/001_create_jobs.sql."""
+
+    __tablename__ = "jobs"
+
+    job_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    required_skills: Mapped[list[str] | None] = mapped_column(JSONType)
+    preferred_skills: Mapped[list[str] | None] = mapped_column(JSONType)
+    minimum_experience: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=True, server_default=func.current_timestamp()
+    )
 
 
 class Role(StrEnum):
