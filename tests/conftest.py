@@ -1,4 +1,5 @@
 import os
+import secrets
 import tempfile
 
 # Must be set before app.config is imported so test runs don't write to ./logs.
@@ -16,7 +17,8 @@ from app.database import Base, get_db
 from app.main import app
 from app.models import Role, User
 
-PASSWORD = "s3cret-pass"
+# Generated per run so no credential-like literal lives in the repo (secret scanners flag them).
+PASSWORD = secrets.token_urlsafe(16)
 ADMIN_EMAIL = "admin@example.com"
 RECRUITER_EMAIL = "recruiter@example.com"
 # Minimum bcrypt cost keeps the suite fast; verify_password reads the cost from the hash.

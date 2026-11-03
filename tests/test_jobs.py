@@ -1,4 +1,5 @@
 import logging
+import secrets
 
 from app.job_parsing import normalize_skills, split_experience
 from app.models import User
@@ -141,7 +142,7 @@ def test_jobs_require_authentication(anon_client):
 
 # --- signup -------------------------------------------------------------------------------
 
-NEW_USER = {"full_name": "Nina New", "email": "Nina@Example.com", "password": "brand-new-pass"}
+NEW_USER = {"full_name": "Nina New", "email": "Nina@Example.com", "password": secrets.token_urlsafe(16)}
 
 
 def test_signup_creates_recruiter_and_logs_in(anon_client):
