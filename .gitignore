@@ -218,3 +218,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- Project-specific ---
+# Application and audit logs, including rotated backups (app.log.1, ...)
+logs/
+
+# Editors / IDEs
+.vscode/
+.idea/
+.claude/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
