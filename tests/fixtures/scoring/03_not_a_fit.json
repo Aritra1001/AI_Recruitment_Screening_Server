@@ -1,0 +1,18 @@
+{
+  "job": {
+    "title": "Senior Python Developer",
+    "description": "Senior Python Developer",
+    "required_skills": ["Python", "FastAPI", "PostgreSQL", "REST APIs"],
+    "preferred_skills": ["Azure", "Docker", "Kubernetes", "LangChain"],
+    "minimum_experience_years": 5
+  },
+  "resume": {
+    "experience": [
+      {"company": "Woodgrove Bank", "role": "Senior Frontend Engineer", "years": 5.7},
+      {"company": "Litware", "role": "Frontend Developer", "years": 1.6}
+    ],
+    "skills": ["JavaScript", "TypeScript", "React", "Next.js", "Redux", "Node.js", "Express", "CSS", "Figma", "Jest"],
+    "education": ["B.Sc. in Computer Science"],
+    "raw_text": "Ananya Das\nSenior Frontend Engineer\n\nEXPERIENCE\nSenior Frontend Engineer, Woodgrove Bank | Mar 2021 - Present\n- Lead frontend development of the retail banking web app in React and TypeScript, used by 1.5M customers.\n- Built a design system of 60+ components with the design team in Figma.\n- Wrote a Node.js/Express backend-for-frontend layer that aggregates the bank's REST APIs.\n\nFrontend Developer, Litware | Aug 2019 - Feb 2021\n- Built marketing pages and dashboards with Next.js and Redux.\n- Improved Lighthouse performance score from 55 to 92.\n\nSKILLS\nJavaScript, TypeScript, React, Next.js, Redux, Node.js, Express, CSS, Figma, Jest\n\nEDUCATION\nB.Sc. in Computer Science, 2019"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "job": {
+    "title": "Senior Python Developer",
+    "description": "Senior Python Developer",
+    "required_skills": ["Python", "FastAPI", "PostgreSQL", "REST APIs"],
+    "preferred_skills": ["Azure", "Docker", "Kubernetes", "LangChain"],
+    "minimum_experience_years": 5
+  },
+  "resume": {
+    "experience": [
+      {"company": "Acme Retail", "role": "Backend Engineer", "years": 3.3},
+      {"company": "Tailspin Toys", "role": "Associate Software Engineer", "years": 1.5}
+    ],
+    "skills": ["Python", "Flask", "Postgres", "REST", "Docker", "AKS", "Celery", "Git"],
+    "education": ["B.E. in Information Technology"],
+    "raw_text": "Rahul Verma\nBackend Engineer\n\nEXPERIENCE\nBackend Engineer, Acme Retail | Jul 2023 - Present\n- Build and maintain order-management REST services in Python (Flask) with a Postgres database.\n- Moved background jobs to Celery, cutting checkout API response time by 30%.\n- Package services with Docker and deploy them to AKS.\n\nAssociate Software Engineer, Tailspin Toys | Jan 2022 - Jun 2023\n- Wrote Python scripts and internal REST endpoints for the catalogue team.\n- Fixed production bugs and wrote unit tests.\n\nSKILLS\nPython, Flask, Postgres, REST, Docker, AKS, Celery, Git\n\nEDUCATION\nB.E. in Information Technology, 2021"
+  }
+}

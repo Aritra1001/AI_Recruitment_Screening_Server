@@ -1,0 +1,18 @@
+{
+  "job": {
+    "title": "Senior Python Developer",
+    "description": "Senior Python Developer",
+    "required_skills": ["Python", "FastAPI", "PostgreSQL", "REST APIs"],
+    "preferred_skills": ["Azure", "Docker", "Kubernetes", "LangChain"],
+    "minimum_experience_years": 5
+  },
+  "resume": {
+    "experience": [
+      {"company": "Adventure Works", "role": "QA Analyst", "years": 2.2},
+      {"company": "Adventure Works", "role": "Technical Support Associate", "years": 1.0}
+    ],
+    "skills": ["Python", "FastAPI", "PostgreSQL", "REST APIs", "Azure", "Docker", "Kubernetes", "LangChain", "Postman", "Jira", "Selenium"],
+    "education": ["BCA"],
+    "raw_text": "Karan Mehta\nQA Analyst\n\nEXPERIENCE\nQA Analyst, Adventure Works | Sep 2024 - Present\n- Write and run manual test cases for the customer portal.\n- Test REST APIs with Postman and log defects in Jira.\n- Run SQL queries on the PostgreSQL test database to check data after test runs.\n\nTechnical Support Associate, Adventure Works | Sep 2023 - Aug 2024\n- Answered customer tickets and escalated bugs to the engineering team.\n\nSKILLS\nPython, FastAPI, PostgreSQL, REST APIs, Azure, Docker, Kubernetes, LangChain, Postman, Jira, Selenium\n\nEDUCATION\nBCA, 2023"
+  }
+}
