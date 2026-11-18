@@ -1,0 +1,18 @@
+{
+  "job": {
+    "title": "Senior Python Developer",
+    "description": "Senior Python Developer",
+    "required_skills": ["Python", "FastAPI", "PostgreSQL", "REST APIs"],
+    "preferred_skills": ["Azure", "Docker", "Kubernetes", "LangChain"],
+    "minimum_experience_years": 5
+  },
+  "resume": {
+    "experience": [
+      {"company": "Wide World Importers", "role": "Senior Backend Engineer", "years": 3.3},
+      {"company": "Alpine Ski House", "role": "Software Engineer", "years": 3.0}
+    ],
+    "skills": ["Python", "FastAPI", "PostgreSQL", "SQLAlchemy", "REST APIs", "Docker", "Azure", "Terraform"],
+    "education": ["B.Tech in Electronics and Communication"],
+    "raw_text": "Sneha Kulkarni\nSenior Backend Engineer\n\nEXPERIENCE\nSenior Backend Engineer, Wide World Importers | Aug 2023 - Present\n- Own the pricing service: FastAPI + PostgreSQL (SQLAlchemy), about 400 requests/second at peak.\n- Designed versioned REST APIs for 5 partner integrations; onboarded partners 50% faster.\n- Deploy with Docker on Azure App Service; manage infrastructure with Terraform.\n\nCareer break (family caregiving) | Jul 2021 - Jul 2023\n\nSoftware Engineer, Alpine Ski House | Jun 2018 - Jun 2021\n- Built booking REST APIs in Python with PostgreSQL.\n- Mentored 2 interns.\n\nSKILLS\nPython, FastAPI, PostgreSQL, SQLAlchemy, REST APIs, Docker, Azure, Terraform\n\nEDUCATION\nB.Tech in Electronics and Communication, 2018"
+  }
+}

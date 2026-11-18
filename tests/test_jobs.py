@@ -1,8 +1,9 @@
 import logging
+import secrets
 
 from app.job_parsing import normalize_skills, split_experience
 from app.models import User
-from tests.conftest import ADMIN_EMAIL, PASSWORD, RECRUITER_EMAIL
+from tests.conftest import ADMIN_EMAIL, PASSWORD, RECRUITER_EMAIL, approve, create_approved_job, pending_id
 
 SENIOR_PYTHON_JOB = {
     "title": "Senior Python Developer",
@@ -12,9 +13,17 @@ SENIOR_PYTHON_JOB = {
 }
 
 
+def update(client, approver, job_id: str, changes: dict) -> dict:
+    """PATCH the job, approve the change, and return the job as it is afterwards."""
+    resp = client.patch(f"/jobs/{job_id}", json=changes)
+    assert resp.status_code == 202, resp.text
+    approve(approver, pending_id(resp))
+    return client.get(f"/jobs/{job_id}").json()
+
+
 def test_create_job_extracts_experience(client):
     resp = client.post("/jobs", json=SENIOR_PYTHON_JOB)
-    assert resp.status_code == 201
+    assert resp.status_code == 202
     body = resp.json()
     assert body["title"] == "Senior Python Developer"
     assert body["required_skills"] == ["Python", "FastAPI", "PostgreSQL", "REST APIs"]
@@ -46,32 +55,25 @@ def test_validation_rejects_whitespace_only_title(client):
     assert client.post("/jobs", json={**SENIOR_PYTHON_JOB, "title": "   "}).status_code == 422
 
 
-def test_update_job_changes_only_sent_fields(client):
-    job = client.post("/jobs", json=SENIOR_PYTHON_JOB).json()
-    resp = client.patch(f"/jobs/{job['job_id']}", json={"title": "Lead Python Developer"})
-    assert resp.status_code == 200
-    body = resp.json()
+def test_update_job_changes_only_sent_fields(client, admin2_client):
+    job = create_approved_job(client, admin2_client, SENIOR_PYTHON_JOB)
+    body = update(client, admin2_client, job["job_id"], {"title": "Lead Python Developer"})
     assert body["title"] == "Lead Python Developer"
     assert body["description"] == job["description"]
     assert body["required_skills"] == job["required_skills"]
     assert body["minimum_experience"] == 5
-    assert client.get(f"/jobs/{job['job_id']}").json()["title"] == "Lead Python Developer"
 
 
-def test_update_job_reparses_required_skills(client):
-    job_id = client.post("/jobs", json=SENIOR_PYTHON_JOB).json()["job_id"]
-    resp = client.patch(
-        f"/jobs/{job_id}", json={"required_skills": ["- Python", "Django", "8+ years experience"]}
-    )
-    body = resp.json()
+def test_update_job_reparses_required_skills(client, admin2_client):
+    job_id = create_approved_job(client, admin2_client, SENIOR_PYTHON_JOB)["job_id"]
+    body = update(client, admin2_client, job_id, {"required_skills": ["- Python", "Django", "8+ years experience"]})
     assert body["required_skills"] == ["Python", "Django"]
     assert body["minimum_experience"] == 8
 
 
-def test_update_job_can_clear_minimum_experience(client):
-    job_id = client.post("/jobs", json=SENIOR_PYTHON_JOB).json()["job_id"]
-    resp = client.patch(f"/jobs/{job_id}", json={"minimum_experience": None})
-    assert resp.json()["minimum_experience"] is None
+def test_update_job_can_clear_minimum_experience(client, admin2_client):
+    job_id = create_approved_job(client, admin2_client, SENIOR_PYTHON_JOB)["job_id"]
+    assert update(client, admin2_client, job_id, {"minimum_experience": None})["minimum_experience"] is None
 
 
 def test_update_job_rejects_null_title(client):
@@ -84,11 +86,12 @@ def test_update_missing_job_returns_404(client):
     assert resp.status_code == 404
 
 
-def test_delete_job(client):
-    job_id = client.post("/jobs", json=SENIOR_PYTHON_JOB).json()["job_id"]
+def test_delete_job(client, admin2_client):
+    job_id = create_approved_job(client, admin2_client, SENIOR_PYTHON_JOB)["job_id"]
     resp = client.delete(f"/jobs/{job_id}")
-    assert resp.status_code == 204
-    assert resp.content == b""
+    assert resp.status_code == 202
+    assert client.get(f"/jobs/{job_id}").status_code == 200  # still there until approved
+    approve(admin2_client, pending_id(resp))
     assert client.get(f"/jobs/{job_id}").status_code == 404
     assert client.delete(f"/jobs/{job_id}").status_code == 404
 
@@ -141,7 +144,7 @@ def test_jobs_require_authentication(anon_client):
 
 # --- signup -------------------------------------------------------------------------------
 
-NEW_USER = {"full_name": "Nina New", "email": "Nina@Example.com", "password": "brand-new-pass"}
+NEW_USER = {"full_name": "Nina New", "email": "Nina@Example.com", "password": secrets.token_urlsafe(16)}
 
 
 def test_signup_creates_recruiter_and_logs_in(anon_client):
@@ -192,8 +195,8 @@ def test_signup_is_logged(anon_client, caplog):
 # --- RBAC ---------------------------------------------------------------------------------
 
 
-def test_recruiter_can_read_jobs(client, recruiter_client):
-    job_id = client.post("/jobs", json=SENIOR_PYTHON_JOB).json()["job_id"]
+def test_recruiter_can_read_jobs(client, admin2_client, recruiter_client):
+    job_id = create_approved_job(client, admin2_client, SENIOR_PYTHON_JOB)["job_id"]
     assert recruiter_client.get("/jobs").status_code == 200
     assert recruiter_client.get(f"/jobs/{job_id}").json()["job_id"] == job_id
 
@@ -214,21 +217,29 @@ def _messages(caplog, logger_name: str) -> list[str]:
     return [r.getMessage() for r in caplog.records if r.name == logger_name]
 
 
-def test_crud_operations_are_logged_with_user(client, caplog):
+def test_crud_operations_are_logged_with_user(client, admin2_client, caplog):
     caplog.set_level(logging.INFO, logger="app")
-    job_id = client.post("/jobs", json=SENIOR_PYTHON_JOB).json()["job_id"]
+    resp = client.post("/jobs", json=SENIOR_PYTHON_JOB)
+    job_id = resp.json()["job_id"]
+    approve(admin2_client, pending_id(resp))
     client.get("/jobs")
     client.get(f"/jobs/{job_id}")
-    client.patch(f"/jobs/{job_id}", json={"title": "Lead Python Developer"})
-    client.delete(f"/jobs/{job_id}")
+    approve(admin2_client, pending_id(client.patch(f"/jobs/{job_id}", json={"title": "Lead Python Developer"})))
+    approve(admin2_client, pending_id(client.delete(f"/jobs/{job_id}")))
 
-    created, listed, read, updated, deleted = _messages(caplog, "app.jobs")
-    assert created.startswith(f"JOB_CREATED job_id={job_id}") and ADMIN_EMAIL in created
+    (
+        create_requested, created, listed, read, update_requested, updated, delete_requested, deleted,
+    ) = _messages(caplog, "app.jobs")
+    assert create_requested.startswith(f"JOB_CREATE_REQUESTED job_id={job_id}") and ADMIN_EMAIL in create_requested
+    assert created.startswith(f"JOB_CREATED job_id={job_id}")
+    assert f"user={ADMIN_EMAIL} approved_by=admin2@example.com" in created
     assert listed.startswith("JOBS_LISTED count=1")
     assert read.startswith(f"JOB_READ job_id={job_id}")
+    assert update_requested.startswith(f"JOB_UPDATE_REQUESTED job_id={job_id}")
     assert updated.startswith(f"JOB_UPDATED job_id={job_id}")
     assert "'old': 'Senior Python Developer', 'new': 'Lead Python Developer'" in updated
     assert "description" not in updated  # unchanged fields are not logged
+    assert delete_requested.startswith(f"JOB_DELETE_REQUESTED job_id={job_id}")
     assert deleted.startswith(f"JOB_DELETED job_id={job_id}") and "Lead Python Developer" in deleted
 
 

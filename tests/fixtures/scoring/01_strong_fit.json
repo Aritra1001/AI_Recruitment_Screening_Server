@@ -1,0 +1,19 @@
+{
+  "job": {
+    "title": "Senior Python Developer",
+    "description": "Senior Python Developer",
+    "required_skills": ["Python", "FastAPI", "PostgreSQL", "REST APIs"],
+    "preferred_skills": ["Azure", "Docker", "Kubernetes", "LangChain"],
+    "minimum_experience_years": 5
+  },
+  "resume": {
+    "experience": [
+      {"company": "Contoso Health", "role": "Senior Software Engineer", "years": 4.8},
+      {"company": "Fabrikam Logistics", "role": "Software Engineer", "years": 2.6},
+      {"company": "Northwind Traders", "role": "Junior Python Developer", "years": 0.9}
+    ],
+    "skills": ["Python", "FastAPI", "Django", "PostgreSQL", "Redis", "REST APIs", "Azure", "Docker", "Kubernetes", "AKS", "LangChain", "Azure OpenAI", "GitHub Actions", "pytest"],
+    "education": ["B.Tech in Computer Science"],
+    "raw_text": "Meera Iyer\nSenior Software Engineer | Python | Bengaluru\n\nSUMMARY\nBackend engineer with 8 years of Python experience building high-traffic REST APIs and LLM-powered services on Azure.\n\nEXPERIENCE\nSenior Software Engineer, Contoso Health | Jan 2022 - Present\n- Lead a team of 4 engineers building the patient-scheduling platform with FastAPI and PostgreSQL, serving 2M+ requests/day.\n- Designed REST APIs consumed by 3 mobile and 2 web clients; cut p95 latency from 900 ms to 180 ms by adding Redis caching and query tuning.\n- Built a clinical-notes summarisation service with LangChain and Azure OpenAI, reducing manual review time by 40%.\n- Containerised 12 services with Docker and migrated them to Azure Kubernetes Service (AKS) with Helm.\n\nSoftware Engineer, Fabrikam Logistics | Jun 2019 - Dec 2021\n- Built shipment-tracking REST APIs in Django REST Framework backed by PostgreSQL.\n- Wrote the CI/CD pipeline in GitHub Actions; raised test coverage from 35% to 85% with pytest.\n\nJunior Python Developer, Northwind Traders | Jul 2018 - May 2019\n- Automated inventory reports with Python and SQL.\n\nSKILLS\nPython, FastAPI, Django, PostgreSQL, Redis, REST APIs, Azure, Docker, Kubernetes (AKS), LangChain, Azure OpenAI, GitHub Actions, pytest\n\nEDUCATION\nB.Tech in Computer Science, 2018\n\nCERTIFICATIONS\nMicrosoft Certified: Azure Developer Associate (AZ-204)"
+  }
+}

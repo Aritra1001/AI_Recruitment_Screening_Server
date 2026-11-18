@@ -1,0 +1,17 @@
+{
+  "job": {
+    "title": "Senior Python Developer",
+    "description": "Senior Python Developer",
+    "required_skills": ["Python", "FastAPI", "PostgreSQL", "REST APIs"],
+    "preferred_skills": ["Azure", "Docker", "Kubernetes", "LangChain"],
+    "minimum_experience_years": 5
+  },
+  "resume": {
+    "experience": [
+      {"company": "Coho Winery", "role": "Python Developer", "years": null}
+    ],
+    "skills": ["Python", "FastAPI", "SQL"],
+    "education": [],
+    "raw_text": "Arjun Nair\nPython Developer\n\nEXPERIENCE\nPython Developer, Coho Winery\n- Worked on backend services using Python and FastAPI.\n\nSKILLS\nPython, FastAPI, SQL"
+  }
+}
