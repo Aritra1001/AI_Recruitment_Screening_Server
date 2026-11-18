@@ -48,4 +48,17 @@ class Settings(BaseSettings):
     # Resumes scored at the same time when a batch is requested.
     scoring_max_concurrency: int = 4
 
+    # Approvals: job changes and resume deletions wait for a second admin (app/approvals.py).
+    # A request nobody approves or rejects within this many hours expires.
+    approval_expiry_hours: int = 48
+    # Where the portal is hosted; approval emails link to {portal_url}/approvals/{id}.
+    portal_url: str = "http://localhost:5173"
+
+    # Azure Communication Services Email: sends the approval emails. With the connection
+    # string empty, emails are only logged (EMAIL_SKIPPED).
+    acs_connection_string: str = ""
+    # The MailFrom address of a domain connected to the Communication Services resource,
+    # e.g. DoNotReply@<guid>.azurecomm.net.
+    email_sender_address: str = ""
+
 settings = Settings()

@@ -19,12 +19,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import approvals, notifications
 from app.auth import get_current_user
 from app.config import settings
 from app.database import get_db
-from app.models import Resume, ResumeStatus, Role, User
+from app.models import ApprovalAction, ApprovalRequest, Resume, ResumeStatus, Role, User
 from app.resume_extraction import extract_resume, is_configured
-from app.schemas import ResumeDetail, ResumeRead
+from app.schemas import PendingApproval, ResumeDetail, ResumeRead
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
 logger = logging.getLogger("app.resumes")
@@ -55,6 +56,18 @@ def _get_resume_or_404(db: Session, resume_id: UUID, user: User, action: str) ->
         logger.warning("RESUME_NOT_FOUND action=%s resume_id=%s user=%s", action, resume_id, user.email)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found")
     return resume
+
+
+def _with_pending[R: ResumeRead](read: R, user: User, pending: ApprovalRequest | None) -> R:
+    """Fill in pending_deletion for admins and for whoever asked for the deletion."""
+    if pending is not None and (user.role == Role.ADMIN or pending.requested_by == user.user_id):
+        read.pending_deletion = PendingApproval.model_validate(pending)
+    return read
+
+
+def _detail(db: Session, resume: Resume, user: User) -> ResumeDetail:
+    pending = approvals.pending_requests(db, resume_ids=[resume.resume_id]).get(resume.resume_id)
+    return _with_pending(ResumeDetail.model_validate(resume), user, pending)
 
 
 def _reject(code: int, detail: str, filename: str, user: User) -> HTTPException:
@@ -159,7 +172,7 @@ def list_resumes(
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> list[Resume]:
+) -> list[ResumeRead]:
     stmt = (
         select(Resume)
         .order_by(Resume.uploaded_at.desc(), Resume.resume_id)
@@ -167,19 +180,20 @@ def list_resumes(
         .offset(offset)
     )
     resumes = list(db.scalars(stmt))
+    pending = approvals.pending_requests(db, resume_ids=[r.resume_id for r in resumes])
     logger.info(
         "RESUMES_LISTED count=%d limit=%d offset=%d user=%s", len(resumes), limit, offset, user.email
     )
-    return resumes
+    return [_with_pending(ResumeRead.model_validate(r), user, pending.get(r.resume_id)) for r in resumes]
 
 
 @router.get("/{resume_id}", response_model=ResumeDetail)
 def get_resume(
     resume_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
-) -> Resume:
+) -> ResumeDetail:
     resume = _get_resume_or_404(db, resume_id, user, "read")
     logger.info("RESUME_READ resume_id=%s user=%s", resume_id, user.email)
-    return resume
+    return _detail(db, resume, user)
 
 
 @router.post("/{resume_id}/extract", response_model=ResumeDetail, status_code=status.HTTP_202_ACCEPTED)
@@ -188,7 +202,7 @@ def extract(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> Resume:
+) -> ResumeDetail:
     """(Re-)run extraction: for resumes uploaded before it was configured, failures, or a refresh."""
     resume = _get_resume_or_404(db, resume_id, user, "extract")
     if not is_configured():
@@ -203,7 +217,7 @@ def extract(
     db.commit()
     logger.info("RESUME_EXTRACTION_REQUESTED resume_id=%s user=%s", resume_id, user.email)
     background_tasks.add_task(extract_resume, resume.resume_id, db.get_bind())
-    return resume
+    return _detail(db, resume, user)
 
 
 @router.get("/{resume_id}/file")
@@ -222,10 +236,16 @@ def download_resume_file(
     )
 
 
-@router.delete("/{resume_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{resume_id}", response_model=ResumeRead, status_code=status.HTTP_202_ACCEPTED)
 def delete_resume(
-    resume_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
-) -> Response:
+    resume_id: UUID,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ResumeRead:
+    """Ask the admins (other than the caller) to approve deleting the resume. It stays, and can
+    still be scored, until one of them does."""
+    approvals.expire_stale_now(db, background_tasks)
     resume = _get_resume_or_404(db, resume_id, user, "delete")
     if user.role != Role.ADMIN and resume.uploaded_by != user.user_id:
         logger.warning(
@@ -235,9 +255,21 @@ def delete_resume(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="You can only delete resumes you uploaded"
         )
+    if approvals.pending_requests(db, resume_ids=[resume.resume_id]):
+        raise approvals.already_pending()
 
-    filename = resume.original_filename
-    db.delete(resume)  # the file goes with the row
-    db.commit()
-    logger.info("RESUME_DELETED resume_id=%s file=%r user=%s", resume_id, filename, user.email)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    details = {
+        "original_filename": resume.original_filename,
+        "candidate_name": resume.candidate_name,
+        "uploaded_by": resume.uploader.full_name,
+        "uploaded_at": resume.uploaded_at.isoformat() if resume.uploaded_at else None,
+    }
+    request, emails = approvals.submit(
+        db, user, ApprovalAction.RESUME_DELETE, resume.original_filename, details, resume_id=resume.resume_id
+    )
+    logger.info(
+        "RESUME_DELETE_REQUESTED resume_id=%s file=%r request_id=%s user=%s",
+        resume_id, resume.original_filename, request.request_id, user.email,
+    )
+    background_tasks.add_task(notifications.send, emails)
+    return _with_pending(ResumeRead.model_validate(resume), user, request)

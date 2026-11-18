@@ -1,8 +1,9 @@
 import re
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
 
 from app.security import MAX_PASSWORD_BYTES, MIN_PASSWORD_LENGTH
 
@@ -39,6 +40,40 @@ class JobUpdate(BaseModel):
         return value
 
 
+def _as_utc(value: datetime | None) -> datetime | None:
+    """The approval tables store naive UTC; say so, so browsers convert it to local time."""
+    return value.replace(tzinfo=UTC) if value is not None and value.tzinfo is None else value
+
+
+UtcDatetime = Annotated[datetime, AfterValidator(_as_utc)]
+
+
+class UserSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    user_id: UUID
+    full_name: str
+    email: str
+
+
+class PendingApproval(BaseModel):
+    """The request waiting for approval on a job or resume."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    request_id: UUID
+    action: str
+    requester: UserSummary
+    requested_at: UtcDatetime
+    expires_at: UtcDatetime
+
+
+class JobApproval(BaseModel):
+    # pending: the job's creation, an edit or its deletion is waiting for approval.
+    status: Literal["pending", "approved"]
+    pending: PendingApproval | None
+
+
 class JobRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -49,6 +84,8 @@ class JobRead(BaseModel):
     preferred_skills: list[str] | None
     minimum_experience: int | None
     created_at: datetime
+    # Admins only; always null for recruiters.
+    approval: JobApproval | None = None
 
 
 class LoginRequest(BaseModel):
@@ -102,14 +139,6 @@ class TokenResponse(BaseModel):
     user: UserRead
 
 
-class UserSummary(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    user_id: UUID
-    full_name: str
-    email: str
-
-
 class ResumeRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -120,6 +149,8 @@ class ResumeRead(BaseModel):
     status: str
     uploaded_at: datetime
     uploader: UserSummary
+    # A deletion waiting for approval. Shown to admins and the person who asked for it.
+    pending_deletion: PendingApproval | None = None
 
 
 # --- Extracted resume fields --------------------------------------------------------------
@@ -196,3 +227,37 @@ class ResumeScoreRead(BaseModel):
     model: str | None
     error: str | None
     scored_at: datetime | None
+
+
+# --- Approvals ----------------------------------------------------------------------------
+
+
+class ApprovalRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    request_id: UUID
+    action: str
+    status: str
+    # Null once the job or resume is gone (deleted, or a new job that wasn't approved).
+    job_id: UUID | None
+    resume_id: UUID | None
+    target_name: str
+    # job_create: the new job's fields. job_update: {field: {"old", "new"}} for each change.
+    # job_delete / resume_delete: what will be deleted.
+    details: dict[str, Any]
+    requester: UserSummary
+    requested_at: UtcDatetime
+    expires_at: UtcDatetime
+    reviewer: UserSummary | None
+    reviewed_at: Annotated[datetime | None, AfterValidator(_as_utc)]
+    review_comment: str | None
+    # For the current user.
+    can_review: bool = False
+    can_cancel: bool = False
+
+
+class ApprovalDecision(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    # Optional; included in the email to the requester.
+    comment: str | None = Field(default=None, max_length=2000)

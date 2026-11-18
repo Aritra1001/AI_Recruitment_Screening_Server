@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import Job, Resume, ResumeScore, ResumeStatus, ScoreStatus, User
+from app.models import Job, Resume, ResumeScore, ResumeStatus, Role, ScoreStatus, User
 from app.resume_scoring import is_configured, is_current, score_resumes, start
 from app.schemas import ResumeScoreRead, ScoreRequest
 
@@ -18,7 +18,8 @@ logger = logging.getLogger("app.scores")
 
 def _get_job_or_404(db: Session, job_id: UUID, user: User, action: str) -> Job:
     job = db.get(Job, job_id)
-    if job is None:
+    # Recruiters don't see a new job until its creation is approved (see app.routers.jobs).
+    if job is None or (not job.is_published and user.role != Role.ADMIN):
         logger.warning("JOB_NOT_FOUND action=%s job_id=%s user=%s", action, job_id, user.email)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     return job

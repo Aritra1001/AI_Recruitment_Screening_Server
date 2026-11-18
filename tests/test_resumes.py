@@ -7,7 +7,7 @@ from sqlalchemy.orm import undefer
 
 from app.config import settings
 from app.models import Resume
-from tests.conftest import ADMIN_EMAIL, RECRUITER_EMAIL
+from tests.conftest import ADMIN_EMAIL, RECRUITER_EMAIL, approve, pending_id
 
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
@@ -146,9 +146,13 @@ def test_resumes_require_authentication(anon_client):
     assert upload(anon_client).status_code == 401
 
 
-def test_uploader_can_delete_own_resume(recruiter_client, session_factory):
+def test_uploader_can_delete_own_resume_once_approved(recruiter_client, client, session_factory):
     resume_id = upload(recruiter_client).json()["resume_id"]
-    assert recruiter_client.delete(f"/resumes/{resume_id}").status_code == 204
+    resp = recruiter_client.delete(f"/resumes/{resume_id}")
+    assert resp.status_code == 202
+    assert resp.json()["pending_deletion"]["requester"]["email"] == RECRUITER_EMAIL
+    assert recruiter_client.get(f"/resumes/{resume_id}").status_code == 200  # kept until approved
+    approve(client, pending_id(resp))
     assert recruiter_client.get(f"/resumes/{resume_id}").status_code == 404
     assert stored_files(session_factory) == {}
 
@@ -161,20 +165,23 @@ def test_recruiter_cannot_delete_someone_elses_resume(recruiter_client, client):
     assert recruiter_client.get(f"/resumes/{resume_id}").status_code == 200
 
 
-def test_admin_can_delete_any_resume(recruiter_client, client, session_factory):
+def test_admin_can_delete_any_resume_once_another_admin_approves(recruiter_client, client, admin2_client, session_factory):
     resume_id = upload(recruiter_client).json()["resume_id"]
-    assert client.delete(f"/resumes/{resume_id}").status_code == 204
+    resp = client.delete(f"/resumes/{resume_id}")
+    assert resp.status_code == 202
+    approve(admin2_client, pending_id(resp))
     assert stored_files(session_factory) == {}
 
 
-def test_resume_actions_are_logged(recruiter_client, caplog):
+def test_resume_actions_are_logged(recruiter_client, client, caplog):
     caplog.set_level(logging.INFO, logger="app")
     resume_id = upload(recruiter_client, "jane.pdf").json()["resume_id"]
     upload(recruiter_client, "notes.txt", b"x")
     recruiter_client.get("/resumes")
     recruiter_client.get(f"/resumes/{resume_id}")
     recruiter_client.get(f"/resumes/{resume_id}/file")
-    recruiter_client.delete(f"/resumes/{resume_id}")
+    request_id = pending_id(recruiter_client.delete(f"/resumes/{resume_id}"))
+    approve(client, request_id)
 
     messages = [r.getMessage() for r in caplog.records if r.name == "app.resumes"]
     assert messages[0] == f"RESUME_UPLOADED resume_id={resume_id} file='jane.pdf' size={len(pdf_bytes('jane.pdf'))} user={RECRUITER_EMAIL}"
@@ -182,4 +189,9 @@ def test_resume_actions_are_logged(recruiter_client, caplog):
     assert messages[2].startswith("RESUMES_LISTED count=1")
     assert messages[3] == f"RESUME_READ resume_id={resume_id} user={RECRUITER_EMAIL}"
     assert messages[4] == f"RESUME_FILE_DOWNLOADED resume_id={resume_id} user={RECRUITER_EMAIL}"
-    assert messages[5] == f"RESUME_DELETED resume_id={resume_id} file='jane.pdf' user={RECRUITER_EMAIL}"
+    assert messages[5] == (
+        f"RESUME_DELETE_REQUESTED resume_id={resume_id} file='jane.pdf' request_id={request_id} user={RECRUITER_EMAIL}"
+    )
+    assert messages[6] == (
+        f"RESUME_DELETED resume_id={resume_id} file='jane.pdf' user={RECRUITER_EMAIL} approved_by={ADMIN_EMAIL}"
+    )

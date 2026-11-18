@@ -8,6 +8,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     Numeric,
@@ -16,6 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -37,14 +39,18 @@ class Job(Base):
     required_skills: Mapped[list[str] | None] = mapped_column(JSONType)
     preferred_skills: Mapped[list[str] | None] = mapped_column(JSONType)
     minimum_experience: Mapped[int | None] = mapped_column(Integer)
+    # False until a second admin approves the job's creation; recruiters only see published jobs.
+    is_published: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=True, server_default=func.current_timestamp()
     )
 
 
 class Role(StrEnum):
-    ADMIN = "admin"  # full CRUD on jobs; can delete any resume
-    RECRUITER = "recruiter"  # read-only on jobs; uploads resumes, deletes only their own
+    # Creates, edits and deletes jobs, and deletes any resume, each once another admin approves.
+    ADMIN = "admin"
+    # Read-only on jobs; uploads resumes, deletes only their own (once an admin approves).
+    RECRUITER = "recruiter"
 
 
 class User(Base):
@@ -140,3 +146,56 @@ class ResumeScore(Base):
     scored_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     resume: Mapped[Resume] = relationship(lazy="joined")
+
+
+class ApprovalAction(StrEnum):
+    JOB_CREATE = "job_create"
+    JOB_UPDATE = "job_update"
+    JOB_DELETE = "job_delete"
+    RESUME_DELETE = "resume_delete"
+
+
+class ApprovalStatus(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"  # withdrawn by the person who asked
+
+
+class ApprovalRequest(Base):
+    """Mirrors db/migrations/006_create_approval_requests.sql."""
+
+    __tablename__ = "approval_requests"
+    # At most one pending request per job and per resume: further changes wait for it.
+    __table_args__ = (
+        Index(
+            "ux_approval_requests_pending_job", "job_id", unique=True,
+            postgresql_where=text("status = 'pending'"), sqlite_where=text("status = 'pending'"),
+        ),
+        Index(
+            "ux_approval_requests_pending_resume", "resume_id", unique=True,
+            postgresql_where=text("status = 'pending'"), sqlite_where=text("status = 'pending'"),
+        ),
+    )
+
+    request_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    action: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default=ApprovalStatus.PENDING)
+    # SET NULL so the request (the audit trail) outlives the job or resume it deleted.
+    job_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("jobs.job_id", ondelete="SET NULL"))
+    resume_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("resumes.resume_id", ondelete="SET NULL"))
+    # The job title or resume file name, for showing the request once the target is gone.
+    target_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # job_create: the new job's fields. job_update: {field: {"old", "new"}} for each change.
+    # job_delete / resume_delete: what will be deleted.
+    details: Mapped[dict[str, Any]] = mapped_column(JSONType, nullable=False)
+    requested_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.user_id"), nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.user_id"))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    review_comment: Mapped[str | None] = mapped_column(Text)
+
+    requester: Mapped[User] = relationship(foreign_keys=[requested_by], lazy="joined")
+    reviewer: Mapped[User | None] = relationship(foreign_keys=[reviewed_by], lazy="joined")
