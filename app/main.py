@@ -8,8 +8,8 @@ from sqlalchemy import update
 from app.config import DEV_JWT_SECRET, settings
 from app.database import SessionLocal
 from app.logging_config import setup_logging
-from app.models import Resume, ResumeStatus
-from app.routers import auth, jobs, resumes
+from app.models import Resume, ResumeScore, ResumeStatus, ScoreStatus
+from app.routers import auth, jobs, resumes, scores
 
 setup_logging()
 if settings.jwt_secret == DEV_JWT_SECRET:
@@ -18,17 +18,24 @@ if settings.jwt_secret == DEV_JWT_SECRET:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Extraction runs as an in-process background task, so a restart (including --reload)
-    # kills any that were running. Mark them failed so they can be retried from the portal.
+    # Extraction and scoring run as in-process background tasks, so a restart (including
+    # --reload) kills any that were running. Mark them failed so they can be retried.
     with SessionLocal() as db:
         interrupted = db.execute(
             update(Resume)
             .where(Resume.status == ResumeStatus.EXTRACTING)
             .values(status=ResumeStatus.FAILED, extraction_error="Interrupted by a server restart")
         ).rowcount
+        interrupted_scores = db.execute(
+            update(ResumeScore)
+            .where(ResumeScore.status == ScoreStatus.SCORING)
+            .values(status=ScoreStatus.FAILED, error="Interrupted by a server restart")
+        ).rowcount
         db.commit()
     if interrupted:
         logging.getLogger("app.resumes").warning("RESUME_EXTRACTIONS_INTERRUPTED count=%d", interrupted)
+    if interrupted_scores:
+        logging.getLogger("app.scores").warning("RESUME_SCORINGS_INTERRUPTED count=%d", interrupted_scores)
     yield
 
 
@@ -43,6 +50,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(jobs.router)
 app.include_router(resumes.router)
+app.include_router(scores.router)
 
 
 @app.get("/health")

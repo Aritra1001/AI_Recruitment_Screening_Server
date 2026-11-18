@@ -3,7 +3,20 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, Text, Uuid, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -82,3 +95,48 @@ class Resume(Base):
     )
 
     uploader: Mapped[User] = relationship(lazy="joined")
+
+    @property
+    def candidate_name(self) -> str | None:
+        return (self.extracted or {}).get("name")
+
+
+class ScoreStatus(StrEnum):
+    SCORING = "scoring"
+    SCORED = "scored"
+    FAILED = "failed"
+
+
+class ResumeScore(Base):
+    """Mirrors db/migrations/005_create_resume_scores.sql."""
+
+    __tablename__ = "resume_scores"
+    __table_args__ = (UniqueConstraint("resume_id", "job_id"),)
+
+    score_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    resume_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("resumes.resume_id", ondelete="CASCADE"), nullable=False
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("jobs.job_id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default=ScoreStatus.SCORING)
+    # Filled in by the scoring step (app/resume_scoring.py).
+    overall_score: Mapped[float | None] = mapped_column(Numeric(5, 2, asdecimal=False))
+    recommendation: Mapped[str | None] = mapped_column(String(20))
+    criteria: Mapped[dict[str, Any] | None] = mapped_column(JSONType)
+    relevant_experience_years: Mapped[float | None] = mapped_column(Numeric(4, 1, asdecimal=False))
+    summary: Mapped[str | None] = mapped_column(Text)
+    strengths: Mapped[list[str] | None] = mapped_column(JSONType)
+    gaps: Mapped[list[str] | None] = mapped_column(JSONType)
+    weights: Mapped[dict[str, int] | None] = mapped_column(JSONType)
+    agent_name: Mapped[str | None] = mapped_column(String(100))
+    agent_version: Mapped[str | None] = mapped_column(String(20))
+    model: Mapped[str | None] = mapped_column(String(100))
+    input_hash: Mapped[str | None] = mapped_column(String(64))
+    error: Mapped[str | None] = mapped_column(Text)
+    scored_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.user_id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=True, server_default=func.current_timestamp()
+    )
+    scored_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    resume: Mapped[Resume] = relationship(lazy="joined")

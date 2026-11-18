@@ -38,4 +38,14 @@ class Settings(BaseSettings):
     azure_document_intelligence_api_key: str = ""
     azure_document_intelligence_model: str = "prebuilt-layout"
 
+    # Microsoft Foundry: the resume-scorer agent that scores a resume against a job.
+    # Signs in with Entra ID (DefaultAzureCredential: `az login` locally, managed identity
+    # when deployed); there is no API key.
+    azure_ai_project_endpoint: str = ""
+    scoring_agent_name: str = "resume-scorer"
+    # Empty uses the agent's latest version; pin it so scores stay comparable.
+    scoring_agent_version: str = ""
+    # Resumes scored at the same time when a batch is requested.
+    scoring_max_concurrency: int = 4
+
 settings = Settings()

@@ -1,8 +1,8 @@
 """Application logging.
 
-Everything under the "app" logger goes to the console and logs/app.log. Job and resume
-activity (app.jobs, app.resumes) is additionally written to its own audit file so there is
-one place to check who created, read, updated or deleted what.
+Everything under the "app" logger goes to the console and logs/app.log. Job, resume and score
+activity (app.jobs, app.resumes, app.scores) is additionally written to its own audit file so
+there is one place to check who created, read, updated, deleted or scored what.
 """
 
 import logging
@@ -37,5 +37,9 @@ def setup_logging() -> None:
     app_logger.setLevel(settings.log_level.upper())
     app_logger.addHandler(console)
     app_logger.addHandler(_file_handler(log_dir / "app.log", formatter))
-    for name, filename in (("app.jobs", "jobs_audit.log"), ("app.resumes", "resumes_audit.log")):
+    for name, filename in (
+        ("app.jobs", "jobs_audit.log"),
+        ("app.resumes", "resumes_audit.log"),
+        ("app.scores", "scores_audit.log"),
+    ):
         logging.getLogger(name).addHandler(_file_handler(log_dir / filename, formatter))

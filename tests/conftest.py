@@ -27,9 +27,11 @@ PASSWORD_HASH = bcrypt.hashpw(PASSWORD.encode(), bcrypt.gensalt(rounds=4)).decod
 
 @pytest.fixture(autouse=True)
 def no_azure(monkeypatch):
-    """Tests never call Azure: extraction is off unless a test configures it (and fakes it)."""
+    """Tests never call Azure: extraction and scoring are off unless a test configures them
+    (and fakes them)."""
     monkeypatch.setattr(settings, "azure_openai_endpoint", "")
     monkeypatch.setattr(settings, "azure_document_intelligence_endpoint", "")
+    monkeypatch.setattr(settings, "azure_ai_project_endpoint", "")
 
 
 @pytest.fixture

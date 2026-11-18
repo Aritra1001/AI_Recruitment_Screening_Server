@@ -145,3 +145,54 @@ class ResumeDetail(ResumeRead):
     extracted: ExtractedResume | None
     extraction_error: str | None
     extracted_at: datetime | None
+
+
+# --- Resume scores ------------------------------------------------------------------------
+# What the scoring step (app/resume_scoring.py) stores in resume_scores.
+
+
+class ScoreRequest(BaseModel):
+    # Omit to score every extracted resume.
+    resume_ids: list[UUID] | None = Field(default=None, min_length=1, max_length=200)
+    # A resume already scored with the same job, resume and agent version keeps its stored
+    # score; true asks the agent again anyway.
+    force: bool = False
+
+
+class CriterionScore(BaseModel):
+    score: int
+    rationale: str
+    evidence: list[str]
+    # Only on the skill criteria (required_skills, preferred_skills).
+    matched: list[str] | None = None
+    missing: list[str] | None = None
+
+
+class ScoredResume(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    resume_id: UUID
+    original_filename: str
+    candidate_name: str | None
+
+
+class ResumeScoreRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    score_id: UUID
+    job_id: UUID
+    resume: ScoredResume
+    status: str
+    overall_score: float | None
+    recommendation: str | None
+    criteria: dict[str, CriterionScore] | None
+    relevant_experience_years: float | None
+    summary: str | None
+    strengths: list[str] | None
+    gaps: list[str] | None
+    weights: dict[str, int] | None
+    agent_name: str | None
+    agent_version: str | None
+    model: str | None
+    error: str | None
+    scored_at: datetime | None
