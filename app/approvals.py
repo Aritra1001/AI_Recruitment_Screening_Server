@@ -34,6 +34,9 @@ from app.models import (
     User,
 )
 from app.notifications import Email
+from app.notifications import html_page as _html
+from app.notifications import html_table as _html_table
+from app.notifications import text_table as _text_table
 
 logger = logging.getLogger("app.approvals")
 jobs_logger = logging.getLogger("app.jobs")
@@ -334,43 +337,6 @@ def _detail_rows(request: ApprovalRequest) -> tuple[list[str], list[list[str]]]:
             ["Uploaded by", details.get("uploaded_by") or ""],
         ]
     return ["", ""], [[FIELD_LABELS[f], _format(f, details.get(f))] for f in JOB_FIELDS]
-
-
-def _html_table(headings: list[str], rows: list[list[str]]) -> str:
-    cell = "padding:8px;border-bottom:1px solid #e2e5ec;vertical-align:top;text-align:left"
-    head = ""
-    if any(headings):
-        head = "<tr>" + "".join(f'<th style="{cell};color:#6b7385">{html.escape(h)}</th>' for h in headings) + "</tr>"
-    body = "".join(
-        "<tr>"
-        + "".join(
-            f'<td style="{cell}{";font-weight:600;white-space:nowrap" if i == 0 else ""}">'
-            f"{html.escape(value).replace(chr(10), '<br>')}</td>"
-            for i, value in enumerate(row)
-        )
-        + "</tr>"
-        for row in rows
-    )
-    return f'<table style="border-collapse:collapse;width:100%;font-size:14px">{head}{body}</table>'
-
-
-def _text_table(headings: list[str], rows: list[list[str]]) -> str:
-    if headings == ["Field", "Current", "Proposed"]:
-        return "\n".join(f"{f}:\n  current:  {old}\n  proposed: {new}" for f, old, new in rows)
-    return "\n".join(f"{label}: {value}" for label, value in rows)
-
-
-def _html(paragraphs: list[str], table: str, button: str, footer: str) -> str:
-    paras = "".join(f'<p style="margin:0 0 12px">{p}</p>' for p in paragraphs)
-    return (
-        '<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#1d2433;'
-        'max-width:600px;margin:0 auto;padding:16px">'
-        f"{paras}{table}"
-        f'<p style="margin:24px 0"><a href="{html.escape(button)}" style="background:#3554d1;color:#fff;'
-        'padding:12px 20px;border-radius:6px;text-decoration:none;font-weight:600;display:inline-block">'
-        "Open in the portal</a></p>"
-        f'<p style="color:#6b7385;font-size:12px">{footer}</p></div>'
-    )
 
 
 def review_email(request: ApprovalRequest, admin: User) -> Email:
