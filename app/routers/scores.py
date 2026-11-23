@@ -6,9 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth import get_current_user
+from app.auth import get_current_user, require_staff
 from app.database import get_db
-from app.models import Job, Resume, ResumeScore, ResumeStatus, Role, ScoreStatus, User
+from app.models import Job, Resume, ResumeScore, ResumeStatus, ScoreStatus, User
+from app.routers.jobs import get_job_or_404
 from app.resume_scoring import is_configured, is_current, score_resumes, start
 from app.schemas import ResumeScoreRead, ScoreRequest
 
@@ -16,23 +17,20 @@ router = APIRouter(prefix="/jobs", tags=["scores"])
 logger = logging.getLogger("app.scores")
 
 
-def _get_job_or_404(db: Session, job_id: UUID, user: User, action: str) -> Job:
-    job = db.get(Job, job_id)
-    # Recruiters don't see a new job until its creation is approved (see app.routers.jobs).
-    if job is None or (not job.is_published and user.role != Role.ADMIN):
-        logger.warning("JOB_NOT_FOUND action=%s job_id=%s user=%s", action, job_id, user.email)
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    return job
-
-
-def _resumes_to_score(db: Session, resume_ids: list[UUID] | None) -> list[Resume]:
-    """The requested resumes (all must exist and be extracted), or every extracted resume."""
+def _resumes_to_score(db: Session, job: Job, resume_ids: list[UUID] | None) -> list[Resume]:
+    """The requested resumes (all must exist, be uploaded for this job and be extracted), or
+    every extracted resume uploaded for this job."""
     if resume_ids is None:
         resumes = list(db.scalars(
-            select(Resume).where(Resume.status == ResumeStatus.EXTRACTED).order_by(Resume.uploaded_at)
+            select(Resume)
+            .where(Resume.job_id == job.job_id, Resume.status == ResumeStatus.EXTRACTED)
+            .order_by(Resume.uploaded_at)
         ))
         if not resumes:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="There are no extracted resumes to score")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="There are no extracted resumes uploaded for this job to score",
+            )
         return resumes
 
     ids = list(dict.fromkeys(resume_ids))  # de-duplicated, order kept
@@ -40,6 +38,11 @@ def _resumes_to_score(db: Session, resume_ids: list[UUID] | None) -> list[Resume
     if missing := [str(i) for i in ids if i not in found]:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Resume not found: {', '.join(missing)}")
     resumes = [found[i] for i in ids]
+    if other_job := [r.original_filename for r in resumes if r.job_id != job.job_id]:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"These resumes weren't uploaded for this job: {', '.join(other_job)}",
+        )
     if not_ready := [r.original_filename for r in resumes if r.status != ResumeStatus.EXTRACTED]:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -54,16 +57,16 @@ def request_scores(
     background_tasks: BackgroundTasks,
     payload: ScoreRequest | None = None,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
 ) -> list[ResumeScore]:
-    """Score resumes against this job in the background (status = scoring). Omit resume_ids to
-    score every extracted resume. A resume already scored from the same job, resume and agent
+    """Score resumes uploaded for this job in the background (status = scoring). Omit resume_ids
+    to score every extracted one. A resume already scored from the same job, resume and agent
     version keeps its stored score unless force is true; one being scored is left alone."""
-    job = _get_job_or_404(db, job_id, user, "score")
+    job = get_job_or_404(db, job_id, user, "score")
     if not is_configured():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Resume scoring is not configured")
     payload = payload or ScoreRequest()
-    resumes = _resumes_to_score(db, payload.resume_ids)
+    resumes = _resumes_to_score(db, job, payload.resume_ids)
 
     existing = {
         s.resume_id: s
@@ -110,11 +113,14 @@ def request_scores(
 def list_scores(
     job_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ) -> list[ResumeScore]:
-    """Every resume scored against this job, best first (still scoring / failed last)."""
-    _get_job_or_404(db, job_id, user, "list_scores")
+    """Every resume uploaded for this job that has been scored, best first (still scoring /
+    failed last). Scores of resumes from other jobs (kept from before resumes belonged to a
+    job) are left out."""
+    get_job_or_404(db, job_id, user, "list_scores")
     stmt = (
         select(ResumeScore)
-        .where(ResumeScore.job_id == job_id)
+        .join(Resume, Resume.resume_id == ResumeScore.resume_id)
+        .where(ResumeScore.job_id == job_id, Resume.job_id == job_id)
         .order_by(ResumeScore.overall_score.desc().nulls_last(), ResumeScore.created_at)
     )
     scores = list(db.scalars(stmt))
@@ -127,7 +133,9 @@ def get_score(
     job_id: UUID, resume_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ) -> ResumeScore:
     score = db.scalar(
-        select(ResumeScore).where(ResumeScore.job_id == job_id, ResumeScore.resume_id == resume_id)
+        select(ResumeScore)
+        .join(Resume, Resume.resume_id == ResumeScore.resume_id)
+        .where(ResumeScore.job_id == job_id, ResumeScore.resume_id == resume_id, Resume.job_id == job_id)
     )
     if score is None:
         logger.warning("SCORE_NOT_FOUND job_id=%s resume_id=%s user=%s", job_id, resume_id, user.email)

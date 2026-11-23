@@ -8,7 +8,7 @@ os.environ.setdefault("LOG_DIR", tempfile.mkdtemp(prefix="recruitment-test-logs-
 import bcrypt
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -16,7 +16,7 @@ from app import notifications
 from app.config import settings
 from app.database import Base, get_db
 from app.main import app
-from app.models import Role, User
+from app.models import Job, Role, User
 
 # Generated per run so no credential-like literal lives in the repo (secret scanners flag them).
 PASSWORD = secrets.token_urlsafe(16)
@@ -24,6 +24,8 @@ ADMIN_EMAIL = "admin@example.com"
 # Changes need a second admin's approval.
 ADMIN2_EMAIL = "admin2@example.com"
 RECRUITER_EMAIL = "recruiter@example.com"
+# Screens resumes for the domains an admin assigns them to.
+MANAGER_EMAIL = "manager@example.com"
 # Minimum bcrypt cost keeps the suite fast; verify_password reads the cost from the hash.
 PASSWORD_HASH = bcrypt.hashpw(PASSWORD.encode(), bcrypt.gensalt(rounds=4)).decode()
 
@@ -77,6 +79,7 @@ def session_factory():
             User(email=ADMIN_EMAIL, full_name="Ada Admin", role=Role.ADMIN, password_hash=PASSWORD_HASH),
             User(email=ADMIN2_EMAIL, full_name="Abe Admin", role=Role.ADMIN, password_hash=PASSWORD_HASH),
             User(email=RECRUITER_EMAIL, full_name="Rae Recruiter", role=Role.RECRUITER, password_hash=PASSWORD_HASH),
+            User(email=MANAGER_EMAIL, full_name="Max Manager", role=Role.MANAGER, password_hash=PASSWORD_HASH),
         ])
         db.commit()
 
@@ -112,6 +115,11 @@ def recruiter_client(session_factory):
     return client_for(RECRUITER_EMAIL)
 
 
+@pytest.fixture
+def manager_client(session_factory):
+    return client_for(MANAGER_EMAIL)
+
+
 def pending_id(response) -> str:
     """The approval request a job or resume response says is pending."""
     body = response.json()
@@ -123,6 +131,25 @@ def approve(approver: TestClient, request_id: str) -> dict:
     resp = approver.post(f"/approvals/{request_id}/approve")
     assert resp.status_code == 200, resp.text
     return resp.json()
+
+
+DEFAULT_JOB_TITLE = "Job for test uploads"
+
+
+def default_job_id() -> str:
+    """A published job that tests upload resumes for when the job doesn't matter, inserted
+    directly (no approval round-trip) the first time it is needed."""
+    sessions = app.dependency_overrides[get_db]()
+    db = next(sessions)
+    try:
+        job = db.scalar(select(Job).where(Job.title == DEFAULT_JOB_TITLE))
+        if job is None:
+            job = Job(title=DEFAULT_JOB_TITLE, description="Any role.", is_published=True)
+            db.add(job)
+            db.commit()
+        return str(job.job_id)
+    finally:
+        sessions.close()
 
 
 def create_approved_job(client: TestClient, approver: TestClient, job: dict) -> dict:

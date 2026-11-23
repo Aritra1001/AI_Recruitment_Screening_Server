@@ -1,7 +1,8 @@
 """Application logging.
 
-Everything under the "app" logger goes to the console and logs/app.log. Job, resume, score
-and approval activity (app.jobs, app.resumes, app.scores, app.approvals) is additionally written
+Everything under the "app" logger goes to the console and logs/app.log. Job, resume, score,
+approval, domain and screening activity (app.jobs, app.resumes, app.scores, app.approvals,
+app.domains, app.screening) is additionally written
 to its own audit file so there is one place to check who asked for, approved, created, read,
 updated or deleted what.
 """
@@ -43,5 +44,7 @@ def setup_logging() -> None:
         ("app.resumes", "resumes_audit.log"),
         ("app.scores", "scores_audit.log"),
         ("app.approvals", "approvals_audit.log"),
+        ("app.domains", "domains_audit.log"),
+        ("app.screening", "screening_audit.log"),
     ):
         logging.getLogger(name).addHandler(_file_handler(log_dir / filename, formatter))

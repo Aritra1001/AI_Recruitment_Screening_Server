@@ -5,11 +5,12 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import google_auth
 from app.auth import get_current_user
 from app.config import settings
 from app.database import get_db
 from app.models import Role, User
-from app.schemas import LoginRequest, SignupRequest, TokenResponse, UserRead
+from app.schemas import GoogleLoginRequest, LoginRequest, SignupRequest, TokenResponse, UserRead
 from app.security import create_access_token, hash_password, verify_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -68,6 +69,66 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
     logger.info("LOGIN_SUCCESS user=%s role=%s", user.email, user.role)
+    return _token_response(user)
+
+
+@router.post("/google", response_model=TokenResponse)
+def google_login(payload: GoogleLoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
+    """Sign in with the ID token from Google's sign-in button.
+
+    The account is found by Google id, then by email (an existing account is linked to the
+    Google account on its first Google sign-in and keeps its role). Anyone else gets a new
+    recruiter account without a password, as with `/signup`.
+    """
+    if not settings.google_client_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Google sign-in is not configured"
+        )
+    try:
+        identity = google_auth.verify_id_token(payload.credential)
+    except google_auth.GoogleSignInError as exc:
+        logger.warning("LOGIN_FAILED method=google reason=%s", exc.reason)
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+    user = db.scalar(select(User).where(User.google_sub == identity.sub))
+    if user is None:
+        user = _find_by_email(db, identity.email)
+        if user is not None and user.google_sub is not None:
+            # The email belongs to an account already linked to another Google account.
+            logger.warning("LOGIN_FAILED method=google email=%s reason=linked_elsewhere", identity.email)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This email is already linked to a different Google account",
+            )
+
+    if user is not None and not user.is_active:
+        logger.warning("LOGIN_FAILED method=google email=%s reason=inactive", user.email)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account has been deactivated")
+
+    event = "LOGIN_SUCCESS"
+    if user is None:
+        user = User(
+            email=identity.email,
+            full_name=identity.name,
+            password_hash=None,
+            google_sub=identity.sub,
+            role=Role.RECRUITER,
+        )
+        db.add(user)
+        event = "SIGNUP_SUCCESS"
+    elif user.google_sub is None:
+        user.google_sub = identity.sub
+        event = "GOOGLE_LINKED"
+
+    if event != "LOGIN_SUCCESS":  # created or linked
+        try:
+            db.commit()
+        except IntegrityError:  # lost a race with a concurrent sign-in for the same account
+            db.rollback()
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Please try signing in again")
+        db.refresh(user)
+
+    logger.info("%s method=google user=%s role=%s", event, user.email, user.role)
     return _token_response(user)
 
 

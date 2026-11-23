@@ -2,6 +2,9 @@
 
     python -m app.create_user --email admin@example.com --name "Jane Admin" --role admin
     python -m app.create_user --email rec@example.com --name "Rob Recruiter" --role recruiter
+    python -m app.create_user --email mgr@example.com --name "Mia Manager" --role manager
+
+A manager screens resumes only for the domains an admin assigns them to (Domains page).
 
 The password is prompted for unless --password is given. Running it again for an
 existing email updates that user's name, role and password.

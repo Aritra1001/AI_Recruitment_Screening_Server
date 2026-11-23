@@ -6,8 +6,8 @@ from sqlalchemy import inspect, select
 from sqlalchemy.orm import undefer
 
 from app.config import settings
-from app.models import Resume
-from tests.conftest import ADMIN_EMAIL, RECRUITER_EMAIL, approve, pending_id
+from app.models import Job, Resume
+from tests.conftest import ADMIN_EMAIL, RECRUITER_EMAIL, approve, default_job_id, pending_id
 
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
@@ -17,9 +17,14 @@ def pdf_bytes(marker: str = "a") -> bytes:
     return b"%PDF-1.7\n% resume " + marker.encode() + b"\n%%EOF\n"
 
 
-def upload(client, name="jane_doe.pdf", content=None, content_type="application/pdf"):
+def upload(client, name="jane_doe.pdf", content=None, content_type="application/pdf", job_id=None):
+    """Upload a resume for job_id (default: a published job made for test uploads)."""
     content = pdf_bytes(name) if content is None else content
-    return client.post("/resumes", files={"file": (name, content, content_type)})
+    return client.post(
+        "/resumes",
+        files={"file": (name, content, content_type)},
+        data={"job_id": job_id or default_job_id()},
+    )
 
 
 def stored_files(session_factory) -> dict[str, bytes]:
@@ -82,10 +87,61 @@ def test_duplicate_upload_points_to_existing_resume(recruiter_client, client, se
     resp = upload(client, "jane (1).pdf", pdf_bytes("same"))
     assert resp.status_code == 409
     assert resp.json()["detail"] == {
-        "message": 'This file was already uploaded as "jane.pdf".',
+        "message": 'This file was already uploaded for this job as "jane.pdf".',
         "resume_id": first["resume_id"],
     }
     assert list(stored_files(session_factory)) == [first["resume_id"]]
+
+
+def insert_job(session_factory, title="Data Engineer", published=True) -> str:
+    with session_factory() as db:
+        job = Job(title=title, description=title, is_published=published)
+        db.add(job)
+        db.commit()
+        return str(job.job_id)
+
+
+def test_upload_records_the_job(recruiter_client):
+    job_id = default_job_id()
+    body = upload(recruiter_client, job_id=job_id).json()
+    assert body["job"] == {"job_id": job_id, "title": "Job for test uploads"}
+
+
+def test_the_same_file_can_be_uploaded_for_another_job(recruiter_client, session_factory):
+    other_job = insert_job(session_factory)
+    first = upload(recruiter_client, "jane.pdf", pdf_bytes("same"))
+    second = upload(recruiter_client, "jane.pdf", pdf_bytes("same"), job_id=other_job)
+    assert (first.status_code, second.status_code) == (201, 201)
+    assert second.json()["job"]["job_id"] == other_job
+
+
+def test_upload_needs_a_job_the_uploader_can_see(recruiter_client, client, session_factory):
+    no_job = recruiter_client.post("/resumes", files={"file": ("a.pdf", pdf_bytes(), "application/pdf")})
+    assert no_job.status_code == 422
+    assert upload(recruiter_client, job_id=str(uuid.uuid4())).status_code == 404
+    # A job awaiting approval is invisible to recruiters; admins can upload for it.
+    unpublished = insert_job(session_factory, published=False)
+    assert upload(recruiter_client, job_id=unpublished).status_code == 404
+    assert upload(client, job_id=unpublished).status_code == 201
+
+
+def test_list_filters_by_job(recruiter_client, session_factory):
+    other_job = insert_job(session_factory)
+    mine = upload(recruiter_client, "a.pdf").json()["resume_id"]
+    theirs = upload(recruiter_client, "b.pdf", job_id=other_job).json()["resume_id"]
+
+    assert [r["resume_id"] for r in recruiter_client.get(f"/resumes?job_id={default_job_id()}").json()] == [mine]
+    assert [r["resume_id"] for r in recruiter_client.get(f"/resumes?job_id={other_job}").json()] == [theirs]
+    assert {r["resume_id"] for r in recruiter_client.get("/resumes").json()} == {mine, theirs}
+    assert recruiter_client.get(f"/resumes?job_id={uuid.uuid4()}").status_code == 404
+
+
+def test_recruiters_dont_see_resumes_of_unapproved_jobs(recruiter_client, client, session_factory):
+    unpublished = insert_job(session_factory, published=False)
+    resume_id = upload(client, job_id=unpublished).json()["resume_id"]
+    assert recruiter_client.get("/resumes").json() == []
+    assert recruiter_client.get(f"/resumes/{resume_id}").status_code == 404
+    assert [r["resume_id"] for r in client.get("/resumes").json()] == [resume_id]
 
 
 def test_list_get_and_download(recruiter_client, client):
@@ -184,9 +240,12 @@ def test_resume_actions_are_logged(recruiter_client, client, caplog):
     approve(client, request_id)
 
     messages = [r.getMessage() for r in caplog.records if r.name == "app.resumes"]
-    assert messages[0] == f"RESUME_UPLOADED resume_id={resume_id} file='jane.pdf' size={len(pdf_bytes('jane.pdf'))} user={RECRUITER_EMAIL}"
+    assert messages[0] == (
+        f"RESUME_UPLOADED resume_id={resume_id} job_id={default_job_id()} file='jane.pdf' "
+        f"size={len(pdf_bytes('jane.pdf'))} user={RECRUITER_EMAIL}"
+    )
     assert messages[1].startswith("RESUME_REJECTED file='notes.txt'")
-    assert messages[2].startswith("RESUMES_LISTED count=1")
+    assert messages[2].startswith("RESUMES_LISTED job_id=None count=1")
     assert messages[3] == f"RESUME_READ resume_id={resume_id} user={RECRUITER_EMAIL}"
     assert messages[4] == f"RESUME_FILE_DOWNLOADED resume_id={resume_id} user={RECRUITER_EMAIL}"
     assert messages[5] == (

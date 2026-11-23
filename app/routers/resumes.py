@@ -9,22 +9,24 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
+    Form,
     HTTPException,
     Query,
     Response,
     UploadFile,
     status,
 )
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import approvals, notifications
-from app.auth import get_current_user
+from app.auth import get_current_user, require_staff
 from app.config import settings
 from app.database import get_db
-from app.models import ApprovalAction, ApprovalRequest, Resume, ResumeStatus, Role, User
+from app.models import ApprovalAction, ApprovalRequest, Job, Resume, ResumeStatus, Role, User
 from app.resume_extraction import extract_resume, is_configured
+from app.routers.jobs import get_job_or_404
 from app.schemas import PendingApproval, ResumeDetail, ResumeRead
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
@@ -52,7 +54,8 @@ def _content_disposition(filename: str) -> str:
 
 def _get_resume_or_404(db: Session, resume_id: UUID, user: User, action: str) -> Resume:
     resume = db.get(Resume, resume_id)
-    if resume is None:
+    # Like the job itself, resumes uploaded for a job awaiting approval are admin-only.
+    if resume is None or (resume.job is not None and not resume.job.is_published and user.role != Role.ADMIN):
         logger.warning("RESUME_NOT_FOUND action=%s resume_id=%s user=%s", action, resume_id, user.email)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found")
     return resume
@@ -77,13 +80,14 @@ def _reject(code: int, detail: str, filename: str, user: User) -> HTTPException:
 
 def _duplicate(existing: Resume, filename: str, user: User) -> HTTPException:
     logger.warning(
-        "RESUME_DUPLICATE file=%r existing_resume_id=%s user=%s", filename, existing.resume_id, user.email
+        "RESUME_DUPLICATE file=%r job_id=%s existing_resume_id=%s user=%s",
+        filename, existing.job_id, existing.resume_id, user.email,
     )
     # A dict detail so the portal can link to the resume that is already there.
     return HTTPException(
         status_code=status.HTTP_409_CONFLICT,
         detail={
-            "message": f'This file was already uploaded as "{existing.original_filename}".',
+            "message": f'This file was already uploaded for this job as "{existing.original_filename}".',
             "resume_id": str(existing.resume_id),
         },
     )
@@ -101,11 +105,14 @@ def _display_name(raw: str | None, ext: str) -> str:
 def upload_resume(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    job_id: UUID = Form(...),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
 ) -> Resume:
-    """Upload one PDF or DOCX resume. The portal uploads several files as parallel requests.
-    Extraction starts in the background (status = extracting) when Azure is configured."""
+    """Upload one PDF or DOCX resume for a job; it is only ever scored against that job. The
+    portal uploads several files as parallel requests. Extraction starts in the background
+    (status = extracting) when Azure is configured."""
+    job = get_job_or_404(db, job_id, user, "upload_resume")
     ext = Path(file.filename or "").suffix.lower()
     filename = _display_name(file.filename, ext)
     if ext not in ALLOWED_TYPES:
@@ -136,11 +143,13 @@ def upload_resume(
         )
 
     sha256 = hashlib.sha256(content).hexdigest()
-    existing = db.scalar(select(Resume).where(Resume.sha256 == sha256))
+    same_file = select(Resume).where(Resume.job_id == job.job_id, Resume.sha256 == sha256)
+    existing = db.scalar(same_file)
     if existing is not None:
         raise _duplicate(existing, filename, user)
 
     resume = Resume(
+        job_id=job.job_id,
         original_filename=filename,
         content_type=content_type,
         size_bytes=len(content),
@@ -154,12 +163,12 @@ def upload_resume(
         db.commit()
     except IntegrityError:  # lost a race with a concurrent upload of the same file
         db.rollback()
-        raise _duplicate(db.scalar(select(Resume).where(Resume.sha256 == sha256)), filename, user)
+        raise _duplicate(db.scalar(same_file), filename, user)
 
     db.refresh(resume)
     logger.info(
-        "RESUME_UPLOADED resume_id=%s file=%r size=%d user=%s",
-        resume.resume_id, filename, resume.size_bytes, user.email,
+        "RESUME_UPLOADED resume_id=%s job_id=%s file=%r size=%d user=%s",
+        resume.resume_id, job.job_id, filename, resume.size_bytes, user.email,
     )
     if resume.status == ResumeStatus.EXTRACTING:
         background_tasks.add_task(extract_resume, resume.resume_id, db.get_bind())
@@ -168,6 +177,7 @@ def upload_resume(
 
 @router.get("", response_model=list[ResumeRead])
 def list_resumes(
+    job_id: UUID | None = Query(None, description="Only resumes uploaded for this job"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -179,10 +189,18 @@ def list_resumes(
         .limit(limit)
         .offset(offset)
     )
+    if job_id is not None:
+        get_job_or_404(db, job_id, user, "list_resumes")
+        stmt = stmt.where(Resume.job_id == job_id)
+    elif user.role != Role.ADMIN:
+        # Resumes uploaded for a job awaiting approval are admin-only, like the job.
+        published = select(Job.job_id).where(Job.is_published)
+        stmt = stmt.where(or_(Resume.job_id.is_(None), Resume.job_id.in_(published)))
     resumes = list(db.scalars(stmt))
     pending = approvals.pending_requests(db, resume_ids=[r.resume_id for r in resumes])
     logger.info(
-        "RESUMES_LISTED count=%d limit=%d offset=%d user=%s", len(resumes), limit, offset, user.email
+        "RESUMES_LISTED job_id=%s count=%d limit=%d offset=%d user=%s",
+        job_id, len(resumes), limit, offset, user.email,
     )
     return [_with_pending(ResumeRead.model_validate(r), user, pending.get(r.resume_id)) for r in resumes]
 
@@ -201,7 +219,7 @@ def extract(
     resume_id: UUID,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
 ) -> ResumeDetail:
     """(Re-)run extraction: for resumes uploaded before it was configured, failures, or a refresh."""
     resume = _get_resume_or_404(db, resume_id, user, "extract")
@@ -241,7 +259,7 @@ def delete_resume(
     resume_id: UUID,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
 ) -> ResumeRead:
     """Ask the admins (other than the caller) to approve deleting the resume. It stays, and can
     still be scored, until one of them does."""
@@ -260,6 +278,7 @@ def delete_resume(
 
     details = {
         "original_filename": resume.original_filename,
+        "job_title": resume.job.title if resume.job else None,
         "candidate_name": resume.candidate_name,
         "uploaded_by": resume.uploader.full_name,
         "uploaded_at": resume.uploaded_at.isoformat() if resume.uploaded_at else None,

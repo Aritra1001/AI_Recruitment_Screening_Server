@@ -155,8 +155,11 @@ def create_job(client) -> str:
     return create_approved_job(client, client_for(ADMIN2_EMAIL), JOB)["job_id"]
 
 
-def extracted_resume(client, session_factory, name="jane_doe.pdf", raw_text="JANE DOE\nPython developer") -> str:
-    resume_id = upload(client, name=name).json()["resume_id"]
+def extracted_resume(
+    client, session_factory, job_id=None, name="jane_doe.pdf", raw_text="JANE DOE\nPython developer"
+) -> str:
+    """Upload a resume for job_id (default: the shared test job) and mark it extracted."""
+    resume_id = upload(client, name=name, job_id=job_id).json()["resume_id"]
     with session_factory() as db:
         resume = db.get(Resume, uuid.UUID(resume_id))
         resume.status = ResumeStatus.EXTRACTED
@@ -168,7 +171,7 @@ def extracted_resume(client, session_factory, name="jane_doe.pdf", raw_text="JAN
 
 def test_scoring_runs_in_the_background_and_is_stored(fake_agent, client, recruiter_client, session_factory):
     job_id = create_job(client)
-    resume_id = extracted_resume(recruiter_client, session_factory)
+    resume_id = extracted_resume(recruiter_client, session_factory, job_id)
 
     response = recruiter_client.post(f"/jobs/{job_id}/scores", json={"resume_ids": [resume_id]})
     assert response.status_code == 202
@@ -192,9 +195,9 @@ def test_scoring_runs_in_the_background_and_is_stored(fake_agent, client, recrui
 
 def test_without_resume_ids_every_extracted_resume_is_scored(fake_agent, client, recruiter_client, session_factory):
     job_id = create_job(client)
-    extracted_resume(recruiter_client, session_factory, "a.pdf")
-    extracted_resume(recruiter_client, session_factory, "b.pdf")
-    upload(recruiter_client, name="not_extracted.pdf")
+    extracted_resume(recruiter_client, session_factory, job_id, "a.pdf")
+    extracted_resume(recruiter_client, session_factory, job_id, "b.pdf")
+    upload(recruiter_client, name="not_extracted.pdf", job_id=job_id)
 
     response = recruiter_client.post(f"/jobs/{job_id}/scores")
     assert response.status_code == 202
@@ -204,8 +207,8 @@ def test_without_resume_ids_every_extracted_resume_is_scored(fake_agent, client,
 
 def test_list_is_ranked_best_first(fake_agent, client, recruiter_client, session_factory, monkeypatch):
     job_id = create_job(client)
-    weak = extracted_resume(recruiter_client, session_factory, "weak.pdf", raw_text="weak")
-    strong = extracted_resume(recruiter_client, session_factory, "strong.pdf", raw_text="strong")
+    weak = extracted_resume(recruiter_client, session_factory, job_id, "weak.pdf", raw_text="weak")
+    strong = extracted_resume(recruiter_client, session_factory, job_id, "strong.pdf", raw_text="strong")
 
     def call_agent(payload):
         output = agent_output()
@@ -223,7 +226,7 @@ def test_list_is_ranked_best_first(fake_agent, client, recruiter_client, session
 
 def test_unchanged_input_reuses_the_stored_score(fake_agent, client, recruiter_client, session_factory):
     job_id = create_job(client)
-    resume_id = extracted_resume(recruiter_client, session_factory)
+    resume_id = extracted_resume(recruiter_client, session_factory, job_id)
     recruiter_client.post(f"/jobs/{job_id}/scores", json={"resume_ids": [resume_id]})
     stored = recruiter_client.get(f"/jobs/{job_id}/scores/{resume_id}").json()
 
@@ -235,7 +238,7 @@ def test_unchanged_input_reuses_the_stored_score(fake_agent, client, recruiter_c
 
 def test_force_rescores_and_replaces_the_row(fake_agent, client, recruiter_client, session_factory):
     job_id = create_job(client)
-    resume_id = extracted_resume(recruiter_client, session_factory)
+    resume_id = extracted_resume(recruiter_client, session_factory, job_id)
     first = recruiter_client.post(f"/jobs/{job_id}/scores", json={"resume_ids": [resume_id]}).json()[0]
     second = recruiter_client.post(f"/jobs/{job_id}/scores", json={"resume_ids": [resume_id], "force": True}).json()[0]
     assert second["status"] == "scoring"
@@ -246,7 +249,7 @@ def test_force_rescores_and_replaces_the_row(fake_agent, client, recruiter_clien
 
 def test_editing_the_job_rescores(fake_agent, client, recruiter_client, session_factory):
     job_id = create_job(client)
-    resume_id = extracted_resume(recruiter_client, session_factory)
+    resume_id = extracted_resume(recruiter_client, session_factory, job_id)
     recruiter_client.post(f"/jobs/{job_id}/scores", json={"resume_ids": [resume_id]})
     resp = client.patch(f"/jobs/{job_id}", json={"description": "Own the recruitment platform's backend."})
     approve(client_for(ADMIN2_EMAIL), pending_id(resp))
@@ -258,7 +261,7 @@ def test_editing_the_job_rescores(fake_agent, client, recruiter_client, session_
 
 def test_re_extracting_the_resume_rescores(fake_agent, client, recruiter_client, session_factory):
     job_id = create_job(client)
-    resume_id = extracted_resume(recruiter_client, session_factory)
+    resume_id = extracted_resume(recruiter_client, session_factory, job_id)
     recruiter_client.post(f"/jobs/{job_id}/scores", json={"resume_ids": [resume_id]})
     with session_factory() as db:
         db.get(Resume, uuid.UUID(resume_id)).raw_text = "JANE DOE\nPython developer, 6 years"
@@ -270,7 +273,7 @@ def test_re_extracting_the_resume_rescores(fake_agent, client, recruiter_client,
 
 def test_a_new_agent_version_rescores(fake_agent, client, recruiter_client, session_factory, monkeypatch):
     job_id = create_job(client)
-    resume_id = extracted_resume(recruiter_client, session_factory)
+    resume_id = extracted_resume(recruiter_client, session_factory, job_id)
     recruiter_client.post(f"/jobs/{job_id}/scores", json={"resume_ids": [resume_id]})
     monkeypatch.setattr(settings, "scoring_agent_version", "4")
 
@@ -294,7 +297,7 @@ def test_input_hash_covers_agent_version_and_input(monkeypatch):
 
 def test_a_resume_already_scoring_is_left_alone(fake_agent, client, recruiter_client, session_factory):
     job_id = create_job(client)
-    resume_id = extracted_resume(recruiter_client, session_factory)
+    resume_id = extracted_resume(recruiter_client, session_factory, job_id)
     recruiter_client.post(f"/jobs/{job_id}/scores", json={"resume_ids": [resume_id]})
     with session_factory() as db:
         db.query(ResumeScore).one().status = "scoring"
@@ -308,7 +311,7 @@ def test_a_resume_already_scoring_is_left_alone(fake_agent, client, recruiter_cl
 
 def test_failed_scoring_is_recorded(fake_agent, client, recruiter_client, session_factory, monkeypatch, caplog):
     job_id = create_job(client)
-    resume_id = extracted_resume(recruiter_client, session_factory)
+    resume_id = extracted_resume(recruiter_client, session_factory, job_id)
     recruiter_client.post(f"/jobs/{job_id}/scores", json={"resume_ids": [resume_id]})
 
     def broken(payload):
@@ -330,10 +333,36 @@ def test_failed_scoring_is_recorded(fake_agent, client, recruiter_client, sessio
 
 def test_unextracted_resume_is_rejected(fake_agent, client, recruiter_client):
     job_id = create_job(client)
-    resume_id = upload(recruiter_client).json()["resume_id"]
+    resume_id = upload(recruiter_client, job_id=job_id).json()["resume_id"]
     response = recruiter_client.post(f"/jobs/{job_id}/scores", json={"resume_ids": [resume_id]})
     assert response.status_code == 409
     assert "jane_doe.pdf" in response.json()["detail"]
+
+
+def test_only_the_jobs_own_resumes_are_scored(fake_agent, client, recruiter_client, session_factory):
+    job_id = create_job(client)
+    own = extracted_resume(recruiter_client, session_factory, job_id, "own.pdf")
+    other = extracted_resume(recruiter_client, session_factory, None, "other.pdf")  # the shared test job
+
+    response = recruiter_client.post(f"/jobs/{job_id}/scores")
+    assert [s["resume"]["resume_id"] for s in response.json()] == [own]
+
+    response = recruiter_client.post(f"/jobs/{job_id}/scores", json={"resume_ids": [own, other]})
+    assert response.status_code == 409
+    assert response.json()["detail"] == "These resumes weren't uploaded for this job: other.pdf"
+    assert len(fake_agent) == 1
+
+
+def test_scores_of_resumes_from_other_jobs_are_hidden(fake_agent, client, recruiter_client, session_factory):
+    """A score kept from before resumes belonged to a job doesn't show up under the job."""
+    job_id = create_job(client)
+    other = extracted_resume(recruiter_client, session_factory, None, "other.pdf")
+    with session_factory() as db:
+        db.add(ResumeScore(job_id=uuid.UUID(job_id), resume_id=uuid.UUID(other), status="scored", overall_score=90))
+        db.commit()
+
+    assert recruiter_client.get(f"/jobs/{job_id}/scores").json() == []
+    assert recruiter_client.get(f"/jobs/{job_id}/scores/{other}").status_code == 404
 
 
 def test_no_extracted_resumes_is_rejected(fake_agent, client, recruiter_client):
@@ -353,7 +382,7 @@ def test_missing_job_or_resume_returns_404(fake_agent, client, recruiter_client,
 
 def test_scoring_requires_configuration(client, recruiter_client, session_factory):
     job_id = create_job(client)
-    resume_id = extracted_resume(recruiter_client, session_factory)
+    resume_id = extracted_resume(recruiter_client, session_factory, job_id)
     response = recruiter_client.post(f"/jobs/{job_id}/scores", json={"resume_ids": [resume_id]})
     assert response.status_code == 503
 
