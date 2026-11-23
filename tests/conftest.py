@@ -8,7 +8,7 @@ os.environ.setdefault("LOG_DIR", tempfile.mkdtemp(prefix="recruitment-test-logs-
 import bcrypt
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -16,7 +16,7 @@ from app import notifications
 from app.config import settings
 from app.database import Base, get_db
 from app.main import app
-from app.models import Role, User
+from app.models import Job, Role, User
 
 # Generated per run so no credential-like literal lives in the repo (secret scanners flag them).
 PASSWORD = secrets.token_urlsafe(16)
@@ -123,6 +123,25 @@ def approve(approver: TestClient, request_id: str) -> dict:
     resp = approver.post(f"/approvals/{request_id}/approve")
     assert resp.status_code == 200, resp.text
     return resp.json()
+
+
+DEFAULT_JOB_TITLE = "Job for test uploads"
+
+
+def default_job_id() -> str:
+    """A published job that tests upload resumes for when the job doesn't matter, inserted
+    directly (no approval round-trip) the first time it is needed."""
+    sessions = app.dependency_overrides[get_db]()
+    db = next(sessions)
+    try:
+        job = db.scalar(select(Job).where(Job.title == DEFAULT_JOB_TITLE))
+        if job is None:
+            job = Job(title=DEFAULT_JOB_TITLE, description="Any role.", is_published=True)
+            db.add(job)
+            db.commit()
+        return str(job.job_id)
+    finally:
+        sessions.close()
 
 
 def create_approved_job(client: TestClient, approver: TestClient, job: dict) -> dict:

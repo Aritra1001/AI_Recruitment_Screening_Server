@@ -329,6 +329,7 @@ def _detail_rows(request: ApprovalRequest) -> tuple[list[str], list[list[str]]]:
     if request.action == ApprovalAction.RESUME_DELETE:
         return ["", ""], [
             ["File", details.get("original_filename") or request.target_name],
+            ["Job", details.get("job_title") or "(none)"],
             ["Candidate", details.get("candidate_name") or "(not extracted)"],
             ["Uploaded by", details.get("uploaded_by") or ""],
         ]

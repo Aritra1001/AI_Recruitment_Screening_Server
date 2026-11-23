@@ -77,15 +77,23 @@ class ResumeStatus(StrEnum):
 
 
 class Resume(Base):
-    """Mirrors db/migrations/003_create_resumes.sql + 004_store_resume_files_in_db.sql."""
+    """Mirrors db/migrations/003_create_resumes.sql, 004_store_resume_files_in_db.sql and
+    007_resumes_belong_to_a_job.sql."""
 
     __tablename__ = "resumes"
+    # The same file can be uploaded once per job (a candidate applying to two jobs).
+    __table_args__ = (UniqueConstraint("job_id", "sha256"),)
 
     resume_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    # The job this resume was uploaded for; it is only scored against that job. Every upload
+    # sets it. Null only for resumes uploaded before resumes belonged to a job.
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("jobs.job_id", ondelete="CASCADE"), index=True
+    )
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     content_type: Mapped[str] = mapped_column(String(100), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
-    sha256: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     # The file itself (BYTEA). Deferred so listing/reading resumes doesn't load the bytes;
     # only the download endpoint touches it.
     content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False, deferred=True)
@@ -101,6 +109,7 @@ class Resume(Base):
     )
 
     uploader: Mapped[User] = relationship(lazy="joined")
+    job: Mapped[Job | None] = relationship(lazy="joined")
 
     @property
     def candidate_name(self) -> str | None:

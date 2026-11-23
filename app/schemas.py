@@ -139,10 +139,20 @@ class TokenResponse(BaseModel):
     user: UserRead
 
 
+class JobSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    job_id: UUID
+    title: str
+
+
 class ResumeRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     resume_id: UUID
+    # The job it was uploaded for (and is scored against). Null only for resumes uploaded
+    # before resumes belonged to a job.
+    job: JobSummary | None
     original_filename: str
     content_type: str
     size_bytes: int
@@ -183,7 +193,8 @@ class ResumeDetail(ResumeRead):
 
 
 class ScoreRequest(BaseModel):
-    # Omit to score every extracted resume.
+    # Omit to score every extracted resume uploaded for the job. Resumes uploaded for another
+    # job are refused.
     resume_ids: list[UUID] | None = Field(default=None, min_length=1, max_length=200)
     # A resume already scored with the same job, resume and agent version keeps its stored
     # score; true asks the agent again anyway.

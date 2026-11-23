@@ -17,7 +17,8 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 logger = logging.getLogger("app.jobs")
 
 
-def _get_job_or_404(db: Session, job_id: UUID, user: User, action: str) -> Job:
+def get_job_or_404(db: Session, job_id: UUID, user: User, action: str) -> Job:
+    """The job, if this user may see it. Shared by the job, resume and score endpoints."""
     job = db.get(Job, job_id)
     # A job waiting for its creation to be approved doesn't exist as far as recruiters know.
     if job is None or (not job.is_published and user.role != Role.ADMIN):
@@ -104,7 +105,7 @@ def list_jobs(
 def get_job(
     job_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ) -> JobRead:
-    job = _get_job_or_404(db, job_id, user, "read")
+    job = get_job_or_404(db, job_id, user, "read")
     logger.info("JOB_READ job_id=%s user=%s", job_id, user.email)
     return _read_one(db, job, user)
 
@@ -121,7 +122,7 @@ def update_job(
     """Ask the other admins to approve the changes (202). The job keeps its current values
     until one of them does. A request that changes nothing returns the job as it is (200)."""
     approvals.expire_stale_now(db, background_tasks)
-    job = _get_job_or_404(db, job_id, user, "update")
+    job = get_job_or_404(db, job_id, user, "update")
     changes: dict[str, dict[str, Any]] = {}
     for field, value in _clean_skill_fields(payload.model_dump(exclude_unset=True)).items():
         old = getattr(job, field)
@@ -151,7 +152,7 @@ def delete_job(
 ) -> JobRead:
     """Ask the other admins to approve deleting the job. It stays live until one of them does."""
     approvals.expire_stale_now(db, background_tasks)
-    job = _get_job_or_404(db, job_id, user, "delete")
+    job = get_job_or_404(db, job_id, user, "delete")
     _check_no_pending(db, job)
     # Keep what will be deleted, since the row itself is gone afterwards.
     request, emails = approvals.submit(
