@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
 
+    # Sign in with Google: the OAuth client ID (Web application) from Google Cloud Console.
+    # Empty turns Google sign-in off.
+    google_client_id: str = ""
+    # Only accept Google Workspace accounts of this domain (the ID token's `hd` claim),
+    # e.g. "company.com". Empty accepts any Google account with a verified email.
+    google_allowed_domain: str = ""
+
     # Origins allowed to call the API from a browser (the React dev server by default).
     cors_origins: list[str] = ["http://localhost:5173"]
 

@@ -116,6 +116,11 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class GoogleLoginRequest(BaseModel):
+    # The ID token (a JWT) Google's sign-in button returns as `credential`.
+    credential: str = Field(min_length=1, max_length=8192)
+
+
 # Deliberately loose (no email-validator dependency): something@domain.tld, no spaces.
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
