@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth import get_current_user
+from app.auth import get_current_user, require_staff
 from app.database import get_db
 from app.models import Job, Resume, ResumeScore, ResumeStatus, ScoreStatus, User
 from app.routers.jobs import get_job_or_404
@@ -57,7 +57,7 @@ def request_scores(
     background_tasks: BackgroundTasks,
     payload: ScoreRequest | None = None,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
 ) -> list[ResumeScore]:
     """Score resumes uploaded for this job in the background (status = scoring). Omit resume_ids
     to score every extracted one. A resume already scored from the same job, resume and agent

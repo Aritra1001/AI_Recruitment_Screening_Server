@@ -20,7 +20,7 @@ from uuid import UUID
 from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app import notifications
 from app.config import settings
@@ -28,6 +28,7 @@ from app.models import (
     ApprovalAction,
     ApprovalRequest,
     ApprovalStatus,
+    Domain,
     Job,
     Resume,
     Role,
@@ -42,13 +43,18 @@ logger = logging.getLogger("app.approvals")
 jobs_logger = logging.getLogger("app.jobs")
 resumes_logger = logging.getLogger("app.resumes")
 
-JOB_FIELDS = ("title", "description", "required_skills", "preferred_skills", "minimum_experience")
+JOB_FIELDS = (
+    "title", "description", "required_skills", "preferred_skills", "minimum_experience",
+    "domain_id", "shortlist_min_score",
+)
 FIELD_LABELS = {
     "title": "Title",
     "description": "Description",
     "required_skills": "Required skills",
     "preferred_skills": "Preferred skills",
     "minimum_experience": "Minimum experience",
+    "domain_id": "Domain",
+    "shortlist_min_score": "Minimum score to shortlist",
 }
 ACTION_LABELS = {
     ApprovalAction.JOB_CREATE: "New job",
@@ -71,8 +77,24 @@ def utcnow() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
+def as_json(value: Any) -> Any:
+    """A job field's value as stored in a request's details (JSON): UUIDs become strings."""
+    return str(value) if isinstance(value, UUID) else value
+
+
 def job_values(job: Job) -> dict[str, Any]:
-    return {field: getattr(job, field) for field in JOB_FIELDS}
+    return {field: as_json(getattr(job, field)) for field in JOB_FIELDS}
+
+
+def _domain_for(db: Session, value: Any) -> Domain:
+    """The domain a pending change names, which an admin may have deleted since."""
+    domain = db.get(Domain, UUID(str(value)))
+    if domain is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The domain this change sets no longer exists. Reject it and ask for the change again.",
+        )
+    return domain
 
 
 def pending_requests(db: Session, *, job_ids=(), resume_ids=()) -> dict[UUID, ApprovalRequest]:
@@ -277,7 +299,10 @@ def _apply(db: Session, request: ApprovalRequest) -> None:
             if job is None:
                 raise gone
             for field, change in request.details.items():
-                setattr(job, field, change["new"])
+                value = change["new"]
+                if field == "domain_id" and value is not None:
+                    value = _domain_for(db, value).domain_id
+                setattr(job, field, value)
             jobs_logger.info(
                 "JOB_UPDATED job_id=%s user=%s approved_by=%s changes=%s",
                 job.job_id, requester, reviewer, request.details,
@@ -286,7 +311,7 @@ def _apply(db: Session, request: ApprovalRequest) -> None:
             job = db.get(Job, request.job_id) if request.job_id else None
             if job is None:
                 raise gone
-            db.delete(job)  # its scores go with it (ON DELETE CASCADE)
+            db.delete(job)  # its resumes, scores and screenings go with it (ON DELETE CASCADE)
             request.job_id = None
             jobs_logger.info(
                 "JOB_DELETED job_id=%s user=%s approved_by=%s deleted=%s",
@@ -311,13 +336,18 @@ def _link(request: ApprovalRequest) -> str:
     return f"{settings.portal_url.rstrip('/')}/approvals/{request.request_id}"
 
 
-def _format(field: str, value: Any) -> str:
+def _format(field: str, value: Any, db: Session | None = None) -> str:
     if value is None:
         return "(not set)"
     if isinstance(value, list):
         return ", ".join(value) if value else "(none)"
     if field == "minimum_experience":
         return f"{value}+ years"
+    if field == "shortlist_min_score":
+        return f"{value} / 100"
+    if field == "domain_id":
+        domain = db.get(Domain, UUID(str(value))) if db is not None else None
+        return domain.name if domain else "(deleted domain)"
     text = str(value)
     return text if len(text) <= _EMAIL_TEXT_LIMIT else text[:_EMAIL_TEXT_LIMIT] + "…"
 
@@ -325,9 +355,10 @@ def _format(field: str, value: Any) -> str:
 def _detail_rows(request: ApprovalRequest) -> tuple[list[str], list[list[str]]]:
     """(column headings, rows) describing the change, shared by the HTML and text bodies."""
     details = request.details
+    db = object_session(request)  # to name the domain in a job's details
     if request.action == ApprovalAction.JOB_UPDATE:
         return ["Field", "Current", "Proposed"], [
-            [FIELD_LABELS[f], _format(f, c["old"]), _format(f, c["new"])] for f, c in details.items()
+            [FIELD_LABELS[f], _format(f, c["old"], db), _format(f, c["new"], db)] for f, c in details.items()
         ]
     if request.action == ApprovalAction.RESUME_DELETE:
         return ["", ""], [
@@ -336,7 +367,8 @@ def _detail_rows(request: ApprovalRequest) -> tuple[list[str], list[list[str]]]:
             ["Candidate", details.get("candidate_name") or "(not extracted)"],
             ["Uploaded by", details.get("uploaded_by") or ""],
         ]
-    return ["", ""], [[FIELD_LABELS[f], _format(f, details.get(f))] for f in JOB_FIELDS]
+    # .get: requests made before a field existed don't have it.
+    return ["", ""], [[FIELD_LABELS[f], _format(f, details.get(f), db)] for f in JOB_FIELDS]
 
 
 def review_email(request: ApprovalRequest, admin: User) -> Email:

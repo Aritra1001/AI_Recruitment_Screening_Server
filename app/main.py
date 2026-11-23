@@ -13,7 +13,7 @@ from app.database import SessionLocal
 from app.logging_config import setup_logging
 from app.models import Resume, ResumeScore, ResumeStatus, ScoreStatus
 from app.routers import approvals as approvals_router
-from app.routers import auth, jobs, resumes, scores
+from app.routers import auth, domains, jobs, resumes, scores, screening
 
 setup_logging()
 if settings.jwt_secret == DEV_JWT_SECRET:
@@ -79,6 +79,8 @@ app.include_router(jobs.router)
 app.include_router(resumes.router)
 app.include_router(scores.router)
 app.include_router(approvals_router.router)
+app.include_router(domains.router)
+app.include_router(screening.router)
 
 
 @app.get("/health")

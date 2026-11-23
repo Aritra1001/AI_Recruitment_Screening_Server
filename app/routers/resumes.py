@@ -21,7 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import approvals, notifications
-from app.auth import get_current_user
+from app.auth import get_current_user, require_staff
 from app.config import settings
 from app.database import get_db
 from app.models import ApprovalAction, ApprovalRequest, Job, Resume, ResumeStatus, Role, User
@@ -107,7 +107,7 @@ def upload_resume(
     file: UploadFile = File(...),
     job_id: UUID = Form(...),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
 ) -> Resume:
     """Upload one PDF or DOCX resume for a job; it is only ever scored against that job. The
     portal uploads several files as parallel requests. Extraction starts in the background
@@ -219,7 +219,7 @@ def extract(
     resume_id: UUID,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
 ) -> ResumeDetail:
     """(Re-)run extraction: for resumes uploaded before it was configured, failures, or a refresh."""
     resume = _get_resume_or_404(db, resume_id, user, "extract")
@@ -259,7 +259,7 @@ def delete_resume(
     resume_id: UUID,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
 ) -> ResumeRead:
     """Ask the admins (other than the caller) to approve deleting the resume. It stays, and can
     still be scored, until one of them does."""

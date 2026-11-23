@@ -66,3 +66,6 @@ def require_roles(*roles: Role) -> Callable[..., User]:
 
 
 require_admin = require_roles(Role.ADMIN)
+# Admins and recruiters: uploading, extracting, scoring and shortlisting resumes. Domain
+# managers only read and decide on the resumes sent to them.
+require_staff = require_roles(Role.ADMIN, Role.RECRUITER)

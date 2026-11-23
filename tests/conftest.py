@@ -24,6 +24,8 @@ ADMIN_EMAIL = "admin@example.com"
 # Changes need a second admin's approval.
 ADMIN2_EMAIL = "admin2@example.com"
 RECRUITER_EMAIL = "recruiter@example.com"
+# Screens resumes for the domains an admin assigns them to.
+MANAGER_EMAIL = "manager@example.com"
 # Minimum bcrypt cost keeps the suite fast; verify_password reads the cost from the hash.
 PASSWORD_HASH = bcrypt.hashpw(PASSWORD.encode(), bcrypt.gensalt(rounds=4)).decode()
 
@@ -77,6 +79,7 @@ def session_factory():
             User(email=ADMIN_EMAIL, full_name="Ada Admin", role=Role.ADMIN, password_hash=PASSWORD_HASH),
             User(email=ADMIN2_EMAIL, full_name="Abe Admin", role=Role.ADMIN, password_hash=PASSWORD_HASH),
             User(email=RECRUITER_EMAIL, full_name="Rae Recruiter", role=Role.RECRUITER, password_hash=PASSWORD_HASH),
+            User(email=MANAGER_EMAIL, full_name="Max Manager", role=Role.MANAGER, password_hash=PASSWORD_HASH),
         ])
         db.commit()
 
@@ -110,6 +113,11 @@ def admin2_client(session_factory):
 @pytest.fixture
 def recruiter_client(session_factory):
     return client_for(RECRUITER_EMAIL)
+
+
+@pytest.fixture
+def manager_client(session_factory):
+    return client_for(MANAGER_EMAIL)
 
 
 def pending_id(response) -> str:

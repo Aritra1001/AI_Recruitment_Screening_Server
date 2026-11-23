@@ -3,7 +3,9 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.models import DEFAULT_SHORTLIST_MIN_SCORE
 
 from app.security import MAX_PASSWORD_BYTES, MIN_PASSWORD_LENGTH
 
@@ -17,6 +19,10 @@ class JobCreate(BaseModel):
     preferred_skills: list[str] = Field(default_factory=list)
     # If omitted, derived from a line like "5+ years experience" in required_skills.
     minimum_experience: int | None = Field(default=None, ge=0, le=60)
+    # The portal always asks for one; without it, the job's resumes can't be shortlisted.
+    domain_id: UUID | None = None
+    # A resume needs at least this overall score to be sent to the domain manager.
+    shortlist_min_score: int = Field(default=DEFAULT_SHORTLIST_MIN_SCORE, ge=0, le=100)
 
 
 class JobUpdate(BaseModel):
@@ -30,8 +36,13 @@ class JobUpdate(BaseModel):
     preferred_skills: list[str] | None = None
     # Send null to clear it.
     minimum_experience: int | None = Field(default=None, ge=0, le=60)
+    domain_id: UUID | None = None
+    shortlist_min_score: int | None = Field(default=None, ge=0, le=100)
 
-    @field_validator("title", "description", "required_skills", "preferred_skills", mode="before")
+    @field_validator(
+        "title", "description", "required_skills", "preferred_skills", "domain_id", "shortlist_min_score",
+        mode="before",
+    )
     @classmethod
     def reject_null(cls, value):
         # Defaults aren't validated, so this only fires when the client explicitly sends null.
@@ -74,6 +85,13 @@ class JobApproval(BaseModel):
     pending: PendingApproval | None
 
 
+class DomainSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    domain_id: UUID
+    name: str
+
+
 class JobRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -83,6 +101,9 @@ class JobRead(BaseModel):
     required_skills: list[str] | None
     preferred_skills: list[str] | None
     minimum_experience: int | None
+    # Null only for jobs created before domains existed.
+    domain: DomainSummary | None
+    shortlist_min_score: int
     created_at: datetime
     # Admins only; always null for recruiters.
     approval: JobApproval | None = None
@@ -272,3 +293,72 @@ class ApprovalDecision(BaseModel):
 
     # Optional; included in the email to the requester.
     comment: str | None = Field(default=None, max_length=2000)
+
+
+# --- Domains ------------------------------------------------------------------------------
+
+
+class DomainInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=100)
+
+
+class DomainManagersUpdate(BaseModel):
+    # Every user must be an active manager. Replaces the current list; [] removes them all.
+    user_ids: list[UUID] = Field(max_length=200)
+
+
+class DomainRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    domain_id: UUID
+    name: str
+    managers: list[UserSummary]
+    job_count: int = 0
+
+
+# --- Screening ----------------------------------------------------------------------------
+
+
+class ScreeningCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    resume_ids: list[UUID] = Field(min_length=1, max_length=200)
+    # Optional context for the manager, included in their email.
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class ScreeningDecision(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    decision: Literal["interview", "rejected"]
+    # Required when rejecting; included in the email to the recruiter.
+    comment: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def reason_for_rejection(self):
+        if self.decision == "rejected" and not self.comment:
+            raise ValueError("a comment is required when rejecting a candidate")
+        return self
+
+
+class ScreeningRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    screening_id: UUID
+    status: str
+    job: JobSummary
+    # The job's current domain: the one whose managers decide.
+    domain: DomainSummary | None
+    resume: ScoredResume
+    score_at_submission: float
+    min_score_at_submission: int
+    note: str | None
+    sender: UserSummary
+    sent_at: UtcDatetime
+    decider: UserSummary | None
+    decided_at: Annotated[datetime | None, AfterValidator(_as_utc)]
+    decision_comment: str | None
+    # For the current user: a manager of the job's domain, while it is pending.
+    can_decide: bool = False

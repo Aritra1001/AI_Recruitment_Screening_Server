@@ -28,8 +28,40 @@ from app.database import Base
 JSONType = JSON().with_variant(JSONB(), "postgresql")
 
 
+class Domain(Base):
+    """A business area such as Software or Data Engineering. Mirrors 008_domains_and_screening.sql.
+
+    Each job belongs to a domain, and the domain's managers screen the resumes that recruiters
+    shortlist for its jobs."""
+
+    __tablename__ = "domains"
+
+    domain_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=True, server_default=func.current_timestamp()
+    )
+
+    managers: Mapped[list["User"]] = relationship(
+        secondary="domain_managers", lazy="selectin", order_by="User.full_name"
+    )
+
+
+class DomainManager(Base):
+    __tablename__ = "domain_managers"
+
+    domain_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("domains.domain_id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.user_id", ondelete="CASCADE"), primary_key=True)
+
+
+# The score a resume needs before it can be sent to the domain manager, when the job doesn't say.
+DEFAULT_SHORTLIST_MIN_SCORE = 60
+
+
 class Job(Base):
-    """Mirrors db/migrations/001_create_jobs.sql."""
+    """Mirrors db/migrations/001_create_jobs.sql + 008_domains_and_screening.sql."""
 
     __tablename__ = "jobs"
 
@@ -39,18 +71,31 @@ class Job(Base):
     required_skills: Mapped[list[str] | None] = mapped_column(JSONType)
     preferred_skills: Mapped[list[str] | None] = mapped_column(JSONType)
     minimum_experience: Mapped[int | None] = mapped_column(Integer)
+    # Null only for jobs created before domains existed; their resumes can't be shortlisted
+    # until an admin sets one.
+    domain_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("domains.domain_id", ondelete="RESTRICT"))
+    # A resume needs at least this overall score (0-100) to be sent to the domain manager.
+    shortlist_min_score: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=DEFAULT_SHORTLIST_MIN_SCORE, server_default=str(DEFAULT_SHORTLIST_MIN_SCORE)
+    )
     # False until a second admin approves the job's creation; recruiters only see published jobs.
     is_published: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=True, server_default=func.current_timestamp()
     )
 
+    domain: Mapped[Domain | None] = relationship(lazy="joined")
+
 
 class Role(StrEnum):
     # Creates, edits and deletes jobs, and deletes any resume, each once another admin approves.
     ADMIN = "admin"
-    # Read-only on jobs; uploads resumes, deletes only their own (once an admin approves).
+    # Read-only on jobs; uploads resumes, deletes only their own (once an admin approves);
+    # sends resumes that meet the job's minimum score to the domain manager.
     RECRUITER = "recruiter"
+    # Screens the resumes sent for jobs in their domains: interview or reject. Read-only
+    # everywhere else.
+    MANAGER = "manager"
 
 
 class User(Base):
@@ -208,3 +253,46 @@ class ApprovalRequest(Base):
 
     requester: Mapped[User] = relationship(foreign_keys=[requested_by], lazy="joined")
     reviewer: Mapped[User | None] = relationship(foreign_keys=[reviewed_by], lazy="joined")
+
+
+class ScreeningStatus(StrEnum):
+    PENDING = "pending"  # sent by a recruiter, waiting for the domain manager
+    INTERVIEW = "interview"
+    REJECTED = "rejected"
+
+
+class Screening(Base):
+    """A resume a recruiter sent to the job's domain manager, and the manager's decision.
+    One per resume (a resume belongs to one job). Mirrors 008_domains_and_screening.sql.
+
+    The domain isn't stored: it is the job's, so moving a job to another domain moves its
+    pending screenings with it."""
+
+    __tablename__ = "screenings"
+
+    screening_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    resume_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("resumes.resume_id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("jobs.job_id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default=ScreeningStatus.PENDING)
+    # The overall score and the job's minimum when it was sent; re-scoring later doesn't change them.
+    score_at_submission: Mapped[float] = mapped_column(Numeric(5, 2, asdecimal=False), nullable=False)
+    min_score_at_submission: Mapped[int] = mapped_column(Integer, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)  # from the recruiter, for the manager
+    sent_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.user_id"), nullable=False)
+    sent_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.user_id"))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime)
+    decision_comment: Mapped[str | None] = mapped_column(Text)
+
+    resume: Mapped[Resume] = relationship(lazy="joined")
+    job: Mapped[Job] = relationship(lazy="joined")
+    sender: Mapped[User] = relationship(foreign_keys=[sent_by], lazy="joined")
+    decider: Mapped[User | None] = relationship(foreign_keys=[decided_by], lazy="joined")
+
+    @property
+    def domain(self) -> Domain | None:
+        return self.job.domain

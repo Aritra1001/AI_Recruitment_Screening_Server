@@ -10,7 +10,7 @@ from app import approvals, notifications
 from app.auth import get_current_user, require_admin
 from app.database import get_db
 from app.job_parsing import normalize_skills, split_experience
-from app.models import ApprovalAction, ApprovalRequest, Job, Role, User
+from app.models import ApprovalAction, ApprovalRequest, Domain, Job, Role, User
 from app.schemas import JobApproval, JobCreate, JobRead, JobUpdate, PendingApproval
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -47,6 +47,11 @@ def _check_no_pending(db: Session, job: Job) -> None:
         raise approvals.already_pending()
 
 
+def _check_domain(db: Session, data: dict[str, Any]) -> None:
+    if data.get("domain_id") is not None and db.get(Domain, data["domain_id"]) is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Domain not found")
+
+
 def _clean_skill_fields(data: dict[str, Any]) -> dict[str, Any]:
     """Normalise any skill lists in `data`, moving experience lines out of required_skills
     into minimum_experience unless the caller supplied that explicitly."""
@@ -68,7 +73,9 @@ def create_job(
 ) -> JobRead:
     """Save the job unpublished and ask the other admins to approve it. Recruiters see it
     once it is approved."""
-    job = Job(**_clean_skill_fields(payload.model_dump()), is_published=False)
+    data = _clean_skill_fields(payload.model_dump())
+    _check_domain(db, data)
+    job = Job(**data, is_published=False)
     db.add(job)
     db.flush()
     request, emails = approvals.submit(
@@ -123,11 +130,13 @@ def update_job(
     until one of them does. A request that changes nothing returns the job as it is (200)."""
     approvals.expire_stale_now(db, background_tasks)
     job = get_job_or_404(db, job_id, user, "update")
+    data = _clean_skill_fields(payload.model_dump(exclude_unset=True))
+    _check_domain(db, data)
     changes: dict[str, dict[str, Any]] = {}
-    for field, value in _clean_skill_fields(payload.model_dump(exclude_unset=True)).items():
+    for field, value in data.items():
         old = getattr(job, field)
         if old != value:
-            changes[field] = {"old": old, "new": value}
+            changes[field] = {"old": approvals.as_json(old), "new": approvals.as_json(value)}
     if not changes:
         logger.info("JOB_UPDATE_NO_CHANGES job_id=%s user=%s", job_id, user.email)
         return _read_one(db, job, user)
